@@ -9,7 +9,8 @@ class Node:
                  parents: Optional[List['Node']] = None,
                  children: Optional[List['Node']] = None,
                  neighbors: Optional[List['Node']] = None,
-                 value: float = 0.0, level: int = 0, node_type: str = 'point'):
+                 value: float = 0.0, level: int = 0,
+                 depth: int = 0, node_type: str = 'point'):
         self.point_idx = point_idx
         self.cluster_idx = cluster_idx
         self.node_type = node_type
@@ -21,6 +22,7 @@ class Node:
         self.neighbors: Set['Node'] = set(neighbors) if neighbors is not None else set()
         self.value = value
         self.level = level
+        self.depth = depth
 
     def __repr__(self) -> str:
         return f"Node(point_idx={self.point_idx}, type={self.node_type}, value={self.value:.2f})"
@@ -30,7 +32,7 @@ class PercolationDataset:
 
     def __init__(self, create_prob: float = 0.3333333, split_prob: float = 0.2096414,
                  rng: Optional[np.random.Generator] = None,
-                 value_generator: Optional[Callable[['Node', np.random.Generator], float]] = None):
+                 value_generator: Optional[Callable[[float, int, np.random.Generator], float]] = None):
         """
         Args:
             create_prob: Probability of creating a new cluster. Default is 1/3.
@@ -49,21 +51,21 @@ class PercolationDataset:
         self.rng = rng if rng is not None else np.random.default_rng()
         self.value_generator = value_generator if value_generator is not None else self._default_generate_value
 
-    def _default_generate_value(self, parent: 'Node', rng: np.random.Generator) -> float:
-        variance = 0.8**(parent.level + 1)
+    def _default_generate_value(self, parent_value: float, level: int, rng: np.random.Generator) -> float:
+        variance = 0.8**level
         std = np.sqrt(variance)
-        return parent.value + rng.normal(0, std)
+        return parent_value + rng.normal(0, std)
 
-    def _split_node(self, node: 'Node', idx_1: int, idx_2: int) -> Tuple['Node', 'Node']:
+    def _split_node(self, node: 'Node', idx_1: int, idx_2: int, level: int) -> Tuple['Node', 'Node']:
         node.node_type = 'latent'
         # Use the configured value generator, passing the node and the dataset's rng
-        val1 = self.value_generator(node, self.rng)
-        val2 = self.value_generator(node, self.rng)
+        val1 = self.value_generator(node.value, level, self.rng)
+        val2 = self.value_generator(node.value, level, self.rng)
 
         child1 = Node(idx_1, node.cluster_idx, parents=[node], value=val1,
-                      level=node.level + 1)
+                      level=level, depth=node.depth + 1)
         child2 = Node(idx_2, node.cluster_idx, parents=[node], value=val2,
-                      level=node.level + 1)
+                      level=level, depth=node.depth + 1)
 
         neighbors = list(node.neighbors)
         # Clear neighbors of the current node as they are being redistributed
@@ -139,7 +141,7 @@ class PercolationDataset:
                 point_split_idx = keys[cluster_split_idx][keys_idx]
                 split_node = points[cluster_split_idx][point_split_idx]
 
-                child1, child2 = self._split_node(split_node, point_idx + 1, point_idx + 2)
+                child1, child2 = self._split_node(split_node, point_idx + 1, point_idx + 2, i)
 
                 del points[cluster_split_idx][point_split_idx]
                 points[cluster_split_idx][child1.point_idx] = child1
