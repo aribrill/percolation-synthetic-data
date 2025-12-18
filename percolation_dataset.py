@@ -98,7 +98,7 @@ class PercolationDataset:
         """
         # TODO: implement efficient selection using Fenwick tree and numba
         weights = cluster_sizes[:n_clusters] / cluster_sizes[:n_clusters].sum()
-        idx = np.random.choice(n_clusters, p=weights)
+        idx = self.rng.choice(n_clusters, p=weights)
         return idx
 
     def construct(self, size: int) -> Tuple[List[Dict[int, 'Node']], Dict[int, 'Node']]:
