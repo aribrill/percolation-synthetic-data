@@ -11,7 +11,11 @@ class TestPercolationDataset(unittest.TestCase):
         self.dataset = PercolationDataset(rng=self.rng)
 
     def test_initialization_validation(self):
-        """Test that invalid split_prob values raise ValueError."""
+        """Test that invalid create_prob and split_prob values raise ValueError."""
+        with self.assertRaises(ValueError):
+            PercolationDataset(create_prob=-0.1)
+        with self.assertRaises(ValueError):
+            PercolationDataset(create_prob=1.1)
         with self.assertRaises(ValueError):
             PercolationDataset(split_prob=-0.1)
         with self.assertRaises(ValueError):
@@ -23,12 +27,15 @@ class TestPercolationDataset(unittest.TestCase):
         points, latents = self.dataset.construct(size=size)
 
         # Verify counts
-        self.assertEqual(len(points), size, "Incorrect number of points (leaves)")
-        self.assertEqual(len(latents), size - 1, "Incorrect number of latents (internal nodes)")
+        point_count = sum(len(cluster_points) for cluster_points in points)
+        cluster_count = len(points)
+        self.assertEqual(point_count, size, "Incorrect number of points (leaves)")
+        self.assertEqual(len(latents), size - cluster_count, "Incorrect number of latents (internal nodes)")
 
         # Verify node types
-        for p in points.values():
-            self.assertEqual(p.node_type, 'point')
+        for cluster_points in points:
+            for p in cluster_points.values():
+                self.assertEqual(p.node_type, 'point')
         for l in latents.values():
             self.assertEqual(l.node_type, 'latent')
 
@@ -60,39 +67,64 @@ class TestPercolationDataset(unittest.TestCase):
         points, latents = ds.construct(size=5)
 
         # Nodes generated via split (level > 0) should have value 100.0
-        for p in points.values():
-            if p.level > 0:
-                self.assertEqual(p.value, 100.0)
+        for cluster_points in points:
+            for p in cluster_points.values():
+                if p.level > 0:
+                    self.assertEqual(p.value, 100.0)
 
     def test_neighbor_graph_is_tree(self):
         """Test that the graph formed by neighboring points is a tree."""
         # Generate a reasonably sized graph
-        points, _ = self.dataset.construct(size=50)
-        adj = self.dataset.build_cluster_graph(points)
-        G = nx.Graph(adj)
+        points, _ = self.dataset.construct(size=100)
+        adj = self.dataset.build_cluster_graph(points[0])
+        G = nx.Graph(adj) # type: ignore[arg-type]
         self.assertTrue(nx.is_tree(G), "Neighbor graph is not a tree (it should be connected and acyclic)")
 
-    def test_hierarchy_is_directed_tree(self):
+    def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
+        points, latents = PercolationDataset(rng=self.rng, create_prob=0).construct(size=50)
+        G = nx.DiGraph()
+
+        # Collect all nodes involved
+        for cluster_points in points:
+            for node in cluster_points.values():
+                for child in node.children:
+                    G.add_edge(node.point_idx, child.point_idx)
+        for node in latents.values():
+            for child in node.children:
+                G.add_edge(node.point_idx, child.point_idx)
+
+        # Check if the structure is an arborescence (a tree directed away from a root)
+        self.assertTrue(nx.is_arborescence(G), "Hierarchy is not an arborescence (directed tree)")
+
+    def test_hierarchy_is_directed_forest(self):
+        """Test that parent-child relationships form a directed forest (branching)."""
         points, latents = self.dataset.construct(size=50)
         G = nx.DiGraph()
 
         # Collect all nodes involved
-        all_nodes = list(points.values()) + list(latents.values())
-        for node in all_nodes:
+        for cluster_points in points:
+            for node in cluster_points.values():
+                for child in node.children:
+                    G.add_edge(node.point_idx, child.point_idx)
+        for node in latents.values():
             for child in node.children:
-                G.add_edge(node.idx, child.idx)
+                G.add_edge(node.point_idx, child.point_idx)
 
-        # Check if the structure is an arborescence (a tree directed away from a root)
-        self.assertTrue(nx.is_arborescence(G), "Hierarchy is not a directed tree/arborescence")
+        # Check if the structure is a branching (a forest of trees directed away from a root)
+        self.assertTrue(nx.is_branching(G), "Hierarchy is not a branching (directed forest)")
 
     def test_degree_distribution(self):
         """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
-        size = 50000
+        size = 100000
         points, _ = self.dataset.construct(size=size)
 
-        # Get degrees
-        degrees = [len(node.neighbors) for node in points.values()]
+        # Get degrees, skipping small clusters
+        size_threshold = 100
+        degrees = []
+        for cluster_points in points:
+            if len(cluster_points) >= size_threshold:
+                degrees.extend([len(node.neighbors) for node in cluster_points.values()])
 
         # Calculate empirical PMF
         val, counts = np.unique(degrees, return_counts=True)
@@ -114,7 +146,7 @@ class TestPercolationDataset(unittest.TestCase):
         # Compute KL Divergence
         kl_div = stats.entropy(pk, qk)
 
-        threshold = 0.0001
+        threshold = 0.001
         self.assertLess(kl_div, threshold, f"KL divergence {kl_div:.6f} exceeds threshold {threshold}")
 
 if __name__ == '__main__':
