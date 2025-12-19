@@ -32,14 +32,16 @@ class PercolationDataset:
 
     def __init__(self, create_prob: float = 0.3333333, split_prob: float = 0.2096414,
                  rng: Optional[np.random.Generator] = None,
-                 value_generator: Optional[Callable[[float, int, np.random.Generator], float]] = None):
+                 value_generator: Optional[Callable[..., float]] = None,
+                 value_generator_kwargs: Optional[Dict[str, Any]] = None):
         """
         Args:
             create_prob: Probability of creating a new cluster. Default is 1/3.
             split_prob: Probability of a neighbor connecting to the first child. Default is 0.2096414.
             rng: Random number generator.
             value_generator: Function to generate values for new nodes.
-                             Signature: (parent, rng) -> float.
+                             Signature: (*args, **kwargs) -> float.
+            value_generator_kwargs: Additional keyword arguments for value_generator. Default is {'ratio': 0.5}.
         """
         if not (0 <= create_prob <= 1):
             raise ValueError(f"create_prob must be between 0 and 1, got {create_prob}")
@@ -50,17 +52,21 @@ class PercolationDataset:
         self.split_prob = split_prob
         self.rng = rng if rng is not None else np.random.default_rng()
         self.value_generator = value_generator if value_generator is not None else self._default_generate_value
+        self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.5}
 
-    def _default_generate_value(self, parent_value: float, level: int, rng: np.random.Generator) -> float:
-        variance = 0.8**level
+    def _default_generate_value(self, parent_value: float, parent_depth: int, rng: np.random.Generator, **kwargs: Any) -> float:
+        ratio = kwargs['ratio']
+        variance = (1 - ratio) * ratio**(parent_depth + 1)
         std = np.sqrt(variance)
         return parent_value + rng.normal(0, std)
 
     def _split_node(self, node: 'Node', idx_1: int, idx_2: int, level: int) -> Tuple['Node', 'Node']:
         node.node_type = 'latent'
         # Use the configured value generator, passing the node and the dataset's rng
-        val1 = self.value_generator(node.value, level, self.rng)
-        val2 = self.value_generator(node.value, level, self.rng)
+        val1 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.rng,
+                                    **self.value_generator_kwargs)
+        val2 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.rng,
+                                    **self.value_generator_kwargs)
 
         child1 = Node(idx_1, node.cluster_idx, parents=[node], value=val1,
                       level=level, depth=node.depth + 1)
@@ -119,7 +125,7 @@ class PercolationDataset:
 
         point_idx = 0
         cluster_idx = 0
-        root = Node(point_idx, cluster_idx)
+        root = Node(point_idx, cluster_idx, value=self.value_generator(0, -1, self.rng, **self.value_generator_kwargs))
         points: List[Dict[int, Node]] = [{root.point_idx: root}]
         cluster_sizes = np.zeros(size, dtype=int)
         cluster_sizes[0] = 1
@@ -129,7 +135,8 @@ class PercolationDataset:
         rvs = self.rng.random(size=size)
         for i in range(1, size):
             if rvs[i] < self.create_prob:
-                node = Node(point_idx + 1, cluster_idx + 1)
+                node = Node(point_idx + 1, cluster_idx + 1, level=i,
+                            value=self.value_generator(0, -1, self.rng, **self.value_generator_kwargs))
                 points.append({point_idx + 1: node})
                 cluster_sizes[cluster_idx + 1] = 1
                 keys.append([point_idx + 1])
@@ -197,9 +204,15 @@ class PercolationDataset:
 
         size = sum(len(cluster_points) for cluster_points in points)
         scale = size**-0.25
+        ratio = self.value_generator_kwargs['ratio']
         for cluster_points in points:
             adj = self.build_cluster_graph(cluster_points)
-            labels = {point.point_idx: point.value for point in cluster_points.values()}
+
+            labels = {}
+            for point in cluster_points.values():
+                irreducible_variance = ratio**(point.depth  + 1)
+                irreducible_std = np.sqrt(irreducible_variance)
+                labels[point.point_idx] = point.value + self.rng.normal(0, irreducible_std)
 
             nodes = list(adj.keys())
 
@@ -223,14 +236,14 @@ class PercolationDataset:
             all_labels.update(labels)
 
         X = np.stack([all_embeddings[node] for node in all_nodes])
-        if X.shape[0] > 1:
-            X -= np.mean(X, axis=0)
-            X /= np.std(X) + 1e-8
+        # if X.shape[0] > 1:
+        #     X -= np.mean(X, axis=0)
+        #     X /= np.std(X) + 1e-8
 
         y = np.array([all_labels[node] for node in all_nodes])
-        if y.shape[0] > 1:
-            y -= np.mean(y)
-            y /= np.std(y) + 1e-8
+        # if y.shape[0] > 1:
+        #     y -= np.mean(y)
+        #     y /= np.std(y) + 1e-8
 
         sorted_inds = np.argsort(all_nodes)
         X = X[sorted_inds]

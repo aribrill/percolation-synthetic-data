@@ -60,7 +60,7 @@ class TestPercolationDataset(unittest.TestCase):
 
     def test_custom_value_generator(self):
         """Test that a custom value generator is correctly utilized."""
-        def constant_gen(parent_value, level, rng):
+        def constant_gen(parent_value, parent_depth, rng, **kwargs):
             return 100.0
 
         ds = PercolationDataset(value_generator=constant_gen, rng=self.rng)
