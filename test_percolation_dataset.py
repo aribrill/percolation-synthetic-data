@@ -2,10 +2,14 @@ import unittest
 import networkx as nx
 import numpy as np
 from scipy import stats
+from sklearn.model_selection import cross_val_score
+from sklearn.dummy import DummyRegressor
+from sklearn.linear_model import Ridge
+from sklearn.neighbors import KNeighborsRegressor
 
 from percolation_dataset import PercolationDataset
 
-class TestPercolationDataset(unittest.TestCase):
+class TestPercolationDatasetBasic(unittest.TestCase):
     def setUp(self):
         self.rng = np.random.default_rng(42)
         self.dataset = PercolationDataset(rng=self.rng)
@@ -141,16 +145,20 @@ class TestPercolationDataset(unittest.TestCase):
         # Check if the structure is a branching (a forest of trees directed away from a root)
         self.assertTrue(nx.is_branching(G), "Hierarchy is not a branching (directed forest)")
 
-class TestPercolationDatasetStatistics(unittest.TestCase):
-    """Set of statistical tests to validate properties of the generated dataset."""
+class TestPercolationDatasetProperties(unittest.TestCase):
+    """Validate the properties of the generated dataset."""
 
     @classmethod
     def setUpClass(cls):
         cls.rng = np.random.default_rng(42)
         cls.dataset = PercolationDataset(rng=cls.rng)
         cls.size = 100000
-        points, _ = cls.dataset.construct(size=cls.size)
+        cls.d = 32
+        points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
         cls.points = points
+        cls.latents = latents
+        cls.X = X
+        cls.y = y
 
     def test_degree_distribution(self):
         """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
@@ -201,6 +209,63 @@ class TestPercolationDatasetStatistics(unittest.TestCase):
         self.assertAlmostEqual(alpha, expected_alpha, delta=sigma_threshold*sigma,
                                msg=f"Estimated alpha {alpha:.4f} deviates more than {sigma_threshold} sigma "
                                    f"{sigma:.4f} from expected {expected_alpha}")
+        
+    def test_data_integrity(self):
+        """Test that the embeddings and labels are valid data."""
+
+        # Check shapes
+        self.assertEqual(self.X.shape, (self.size, self.d))
+        self.assertEqual(self.y.shape, (self.size,))
+
+        # Check for NaNs and Infs in embeddings
+        self.assertFalse(np.isnan(self.X).any(), "Embeddings contain NaN values")
+        self.assertFalse(np.isinf(self.X).any(), "Embeddings contain Inf values")
+
+        # Check for NaNs and Infs in labels
+        self.assertFalse(np.isnan(self.y).any(), "Labels contain NaN values")
+        self.assertFalse(np.isinf(self.y).any(), "Labels contain Inf values")
+
+    def test_feature_variability(self):
+        """Test that the features have reasonable variance."""
+        variances = self.X.var(axis=0)
+        min_var = 0.01
+        max_var = 1.0
+        self.assertTrue(np.all(variances > min_var), f"Feature variances are too small: {variances}")
+        self.assertTrue(np.all(variances < max_var), f"Feature variances are too large: {variances}")
+
+    def test_embedding_distribution(self):
+        """Test that the embeddings have approximately zero mean and consistent standard deviations."""
+        self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), "Embeddings do not have mean close to 0")
+        # ptp = "peak to peak" = max - min
+        self.assertLess(np.ptp(self.X.std(axis=0)), 0.1, "Embeddings do not have consistent standard deviations")
+
+    def test_label_distribution(self):
+        """Test that the regression labels have approximately zero mean and unit standard deviation."""
+        self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
+        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.01, msg="Labels do not have standard deviation close to 1")
+
+    def test_feature_label_correlation(self):
+        """Test that the features and labels are weakly correlated."""
+        r = np.array([np.corrcoef(self.X[:, j], self.y)[0, 1] for j in range(self.X.shape[1])])
+        self.assertTrue(np.max(np.abs(r)) > 0.01, "Features and labels are not correlated")
+        self.assertTrue(np.max(np.abs(r)) < 0.5, "Features and labels are too strongly correlated")
+
+    def test_baseline_performance(self):
+        """Test that simple baseline models perform poorly."""
+        model = DummyRegressor(strategy='mean')
+        scores = cross_val_score(model, self.X, self.y, cv=5, scoring='r2')
+        self.assertTrue(np.all(scores < 0.001), "Mean baseline performance is too high")
+
+        model = Ridge(alpha=1.0)
+        scores = cross_val_score(model, self.X, self.y, cv=5, scoring='r2')
+        self.assertTrue(np.all(scores < 0.05), "Ridge baseline performance is too high")
+
+    def test_knn_performance(self):
+        """Test that a KNN model performs well on the dataset."""
+        model = KNeighborsRegressor(n_neighbors=5)
+        scores = cross_val_score(model, self.X, self.y, cv=5, scoring='r2')
+        self.assertTrue(np.all(scores > 0.2), "KNN model performance is too low")
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
