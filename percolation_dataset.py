@@ -23,6 +23,7 @@ class Node:
         self.value = value
         self.level = level
         self.depth = depth
+        self.error = 0.0
 
     def __repr__(self) -> str:
         return f"Node(point_idx={self.point_idx}, type={self.node_type}, value={self.value:.2f})"
@@ -216,7 +217,9 @@ class PercolationDataset:
             for point in cluster_points.values():
                 irreducible_variance = ratio**(point.depth  + 1)
                 irreducible_std = np.sqrt(irreducible_variance)
-                all_labels.append(point.value + self.rng.normal(0, irreducible_std))
+                irreducible_error = self.rng.normal(0, irreducible_std)
+                point.error = irreducible_error
+                all_labels.append(point.value + point.error)
 
             nodes = [point.point_idx for point in cluster_points.values()]
 
