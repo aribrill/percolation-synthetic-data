@@ -1,7 +1,10 @@
+from collections import defaultdict
+from itertools import chain, islice
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy import sparse
 
 class Node:
     """Represents a node in the percolation graph."""
@@ -252,3 +255,52 @@ class PercolationDataset:
         points, latents = self.construct(size)
         embeddings, labels = self.embed(points, d)
         return points, latents, embeddings, labels
+
+class GroundTruthFeatures:
+    """Generates ground truth features from generated percolation data."""
+
+    def __init__(self, points: List[Dict[int, Node]], latents: Dict[int, Node]):
+        self.points = points
+        self.latents = latents
+        
+        self.pidx2lidx = defaultdict(list)
+        self.lidx2pidx = defaultdict(list)
+        sorted_latents = dict(sorted(latents.items(), key=lambda item: item[1].level))
+        self.latent2lidx = {latent.point_idx: i for i, latent in enumerate(sorted_latents.values())}
+        self.lidx2latent = {i: latent.point_idx for i, latent in enumerate(sorted_latents.values())}
+
+        for i, point in enumerate(chain.from_iterable(cp.values() for cp in points)):
+            parents = point.parents
+            while parents:
+                latent = list(parents)[0]
+                lidx = self.latent2lidx[latent.point_idx]
+                self.pidx2lidx[i].append(lidx)
+                self.lidx2pidx[lidx].append(i)
+                parents = latent.parents
+            self.pidx2lidx[i].reverse()
+        self.lidx2pidx = dict(sorted(self.lidx2pidx.items(), key=lambda item: item[0]))
+        self.n_samples = sum(len(cp) for cp in self.points)
+        self.n_latents = len(self.lidx2pidx)
+
+    def get_features(self, n_features: Optional[int] = None) -> sparse.csr_matrix:
+        """
+        Returns sparse matrix of latent features for each data point.
+
+        Args:
+            n_features: Number of features to return, in generation order. If None, returns all features.
+        Returns:            
+            X: Sparse matrix of shape (n_points, n_features).
+        """
+        if n_features is None:
+            n_features = self.n_latents
+        data = []
+        row_ind = []
+        col_ind = []
+
+        for lidx, pidx in islice(self.lidx2pidx.items(), n_features):
+            data.extend(np.ones_like(pidx))
+            row_ind.extend(pidx)
+            col_ind.extend(np.full_like(pidx, lidx))
+
+        X = sparse.csr_matrix((data, (row_ind, col_ind)), shape=(self.n_samples, n_features))
+        return X

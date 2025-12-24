@@ -7,7 +7,7 @@ from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import Ridge
 from sklearn.neighbors import KNeighborsRegressor
 
-from percolation_dataset import PercolationDataset
+from percolation_dataset import PercolationDataset, GroundTruthFeatures
 
 class TestPercolationDatasetBasic(unittest.TestCase):
     def setUp(self):
@@ -145,6 +145,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Check if the structure is a branching (a forest of trees directed away from a root)
         self.assertTrue(nx.is_branching(G), "Hierarchy is not a branching (directed forest)")
 
+
 class TestPercolationDatasetProperties(unittest.TestCase):
     """Validate the properties of the generated dataset."""
 
@@ -159,6 +160,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         cls.latents = latents
         cls.X = X
         cls.y = y
+        cls.ground_truth_features = GroundTruthFeatures(points, latents)
 
     def test_degree_distribution(self):
         """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
@@ -269,6 +271,36 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
         self.assertTrue(np.all(scores > 0.2), f"KNN model performance is too low, scores: {scores}")
 
+    def test_ground_truth_features(self):
+        """Test that ground truth features are correctly computed."""
+        self.assertTrue(all(a <= b for a, b in zip(self.ground_truth_features.pidx2lidx.keys(),
+                                                   list(self.ground_truth_features.pidx2lidx.keys())[1:])),
+                        "pidx2lidx keys are not in sorted order")
+        for lst in self.ground_truth_features.pidx2lidx.values():
+            self.assertTrue(all(a <= b for a, b in zip(lst, lst[1:])), "pidx2lidx values are not in sorted order")
+            self.assertEqual(len(np.unique(lst)), len(lst), "pidx2lidx values are not unique")
+
+        self.assertTrue(all(a <= b for a, b in zip(self.ground_truth_features.lidx2pidx.keys(),
+                                                   list(self.ground_truth_features.lidx2pidx.keys())[1:])),
+                        "lidx2pidx keys are not in sorted order")
+        for lst in self.ground_truth_features.lidx2pidx.values():
+            self.assertTrue(all(a <= b for a, b in zip(lst, lst[1:])), "lidx2pidx values are not in sorted order")
+            self.assertEqual(len(np.unique(lst)), len(lst), "lidx2pidx values are not unique")
+
+        self.assertEqual(len(self.ground_truth_features.pidx2lidx), self.ground_truth_features.n_samples,
+                         "pidx2lidx length does not match number of samples")
+        self.assertEqual(len(self.ground_truth_features.lidx2pidx), self.ground_truth_features.n_latents,
+                         "lidx2pidx length does not match number of latents")
+        self.assertEqual(len(self.ground_truth_features.latent2lidx), self.ground_truth_features.n_latents,
+                         "latent2lidx length does not match number of latents")
+        self.assertEqual(len(self.ground_truth_features.lidx2latent), self.ground_truth_features.n_latents,
+                         "lidx2latent length does not match number of latents")
+        for k, v in self.ground_truth_features.latent2lidx.items():
+            self.assertEqual(k, self.ground_truth_features.lidx2latent[self.ground_truth_features.latent2lidx[k]],
+                             "latent2lidx and lidx2latent do not match")
+        for k, v in self.ground_truth_features.lidx2latent.items():
+            self.assertEqual(k, self.ground_truth_features.latent2lidx[self.ground_truth_features.lidx2latent[k]],
+                             "lidx2latent and latent2lidx do not match")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
