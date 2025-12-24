@@ -2,7 +2,7 @@ import unittest
 import networkx as nx
 import numpy as np
 from scipy import stats
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, KFold
 from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import Ridge
 from sklearn.neighbors import KNeighborsRegressor
@@ -253,18 +253,21 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_baseline_performance(self):
         """Test that simple baseline models perform poorly."""
         model = DummyRegressor(strategy='mean')
-        scores = cross_val_score(model, self.X, self.y, cv=5, scoring='r2')
-        self.assertTrue(np.all(scores < 0.001), "Mean baseline performance is too high")
+
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
+        self.assertTrue(np.all(scores < 0.001), f"Mean baseline performance is too high, scores: {scores}")
 
         model = Ridge(alpha=1.0)
-        scores = cross_val_score(model, self.X, self.y, cv=5, scoring='r2')
-        self.assertTrue(np.all(scores < 0.05), "Ridge baseline performance is too high")
+        scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
+        self.assertTrue(np.all(scores < 0.05), f"Ridge baseline performance is too high, scores: {scores}")
 
     def test_knn_performance(self):
         """Test that a KNN model performs well on the dataset."""
         model = KNeighborsRegressor(n_neighbors=5)
-        scores = cross_val_score(model, self.X, self.y, cv=5, scoring='r2')
-        self.assertTrue(np.all(scores > 0.2), "KNN model performance is too low")
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
+        self.assertTrue(np.all(scores > 0.2), f"KNN model performance is too low, scores: {scores}")
 
 
 if __name__ == '__main__':

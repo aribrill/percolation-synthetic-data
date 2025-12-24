@@ -61,7 +61,6 @@ class PercolationDataset:
         return parent_value + rng.normal(0, std)
 
     def _split_node(self, node: 'Node', idx_1: int, idx_2: int, level: int) -> Tuple['Node', 'Node']:
-        node.node_type = 'latent'
         # Use the configured value generator, passing the node and the dataset's rng
         val1 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.rng,
                                     **self.value_generator_kwargs)
@@ -73,8 +72,8 @@ class PercolationDataset:
         child2 = Node(idx_2, node.cluster_idx, parents=[node], value=val2,
                       level=level, depth=node.depth + 1)
 
-        neighbors = list(node.neighbors)
         # Clear neighbors of the current node as they are being redistributed
+        neighbors = list(node.neighbors)
         node.neighbors.clear()
 
         groups = self.rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
@@ -91,6 +90,12 @@ class PercolationDataset:
         child2.neighbors.add(child1)
         node.children.add(child1)
         node.children.add(child2)
+
+        # Update the current node to be a latent node
+        node.node_type = 'latent'
+        node.value = 0.0
+        node.level = level
+
         return child1, child2
     
     def _select_cluster(self, cluster_sizes: NDArray[np.int64], n_clusters: int) -> int:
@@ -200,7 +205,7 @@ class PercolationDataset:
         
         all_nodes = []
         all_embeddings = {}
-        all_labels = {}
+        all_labels = []
 
         size = sum(len(cluster_points) for cluster_points in points)
         scale = size**-0.25
@@ -208,13 +213,12 @@ class PercolationDataset:
         for cluster_points in points:
             adj = self.build_cluster_graph(cluster_points)
 
-            labels = {}
             for point in cluster_points.values():
                 irreducible_variance = ratio**(point.depth  + 1)
                 irreducible_std = np.sqrt(irreducible_variance)
-                labels[point.point_idx] = point.value + self.rng.normal(0, irreducible_std)
+                all_labels.append(point.value + self.rng.normal(0, irreducible_std))
 
-            nodes = list(adj.keys())
+            nodes = [point.point_idx for point in cluster_points.values()]
 
             root = self.rng.choice(nodes)
             embeddings = {root: self.rng.uniform(low=-0.5, high=0.5, size=d)}
@@ -228,26 +232,15 @@ class PercolationDataset:
                 for child in adj[parent]:
                     if child not in visited:
                         visited.add(child)
+                        assert child not in embeddings
                         embeddings[child] = embeddings[parent] + self.rng.normal(0, scale, size=d)
                         stack.append(child)
             
             all_nodes.extend(nodes)
             all_embeddings.update(embeddings)
-            all_labels.update(labels)
 
         X = np.stack([all_embeddings[node] for node in all_nodes])
-        # if X.shape[0] > 1:
-        #     X -= np.mean(X, axis=0)
-        #     X /= np.std(X) + 1e-8
-
-        y = np.array([all_labels[node] for node in all_nodes])
-        # if y.shape[0] > 1:
-        #     y -= np.mean(y)
-        #     y /= np.std(y) + 1e-8
-
-        sorted_inds = np.argsort(all_nodes)
-        X = X[sorted_inds]
-        y = y[sorted_inds]
+        y = np.array(all_labels)
 
         return X, y
 
