@@ -280,6 +280,8 @@ class GroundTruthFeatures:
         """
         if n_features is None:
             n_features = self.n_latents
+        if n_features < 1 or n_features > self.n_latents:
+            raise ValueError(f"n_features must be between 1 and {self.n_latents}, got {n_features}")
         data = []
         row_ind = []
         col_ind = []

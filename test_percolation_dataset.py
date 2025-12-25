@@ -155,6 +155,49 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Check if the structure is a branching (a forest of trees directed away from a root)
         self.assertTrue(nx.is_branching(G), "Hierarchy is not a branching (directed forest)")
 
+    def test_ground_truth_features_n_features(self):
+        """Test that setting n_features has correct effect."""
+        size = 1000
+        points, latents = self.dataset.construct(size=size)
+        gt_features = GroundTruthFeatures(points, latents)
+        # Default n_features equal n_latents
+        X_gt = gt_features.get_features()
+        assert X_gt.shape is not None
+        self.assertEqual(X_gt.shape[1], gt_features.n_latents,
+                         "Ground truth feature matrix has incorrect number of columns")
+        # Setting n_features yields correct shape
+        n_features = gt_features.n_latents // 2
+        X_gt = gt_features.get_features(n_features=n_features)
+        assert X_gt.shape is not None
+        self.assertEqual(X_gt.shape[1], n_features,
+                         "Ground truth feature matrix has incorrect number of columns when n_features is set")
+        # Setting n_features less than 1 raises error
+        with self.assertRaises(ValueError):
+            gt_features.get_features(n_features=0)
+        # Setting n_features greater than n_latents raises error
+        with self.assertRaises(ValueError):
+            gt_features.get_features(n_features=gt_features.n_latents + 1)
+
+    def test_ground_truth_feature_matrix(self):
+        """Test that ground truth feature matrix has correct shape and content."""
+        size = 1000
+        points, latents = self.dataset.construct(size=size)
+        gt_features = GroundTruthFeatures(points, latents)
+        X_gt = gt_features.get_features()
+
+        assert X_gt.shape is not None
+        self.assertEqual(X_gt.shape[0], size, "Ground truth feature matrix has incorrect number of rows")
+        self.assertEqual(X_gt.shape[1], gt_features.n_latents,
+                         "Ground truth feature matrix has incorrect number of columns")
+
+        # Verify that each row has exactly one non-zero entry per latent node it is associated with
+        for pidx in range(size):
+            row = X_gt.getrow(pidx).toarray().flatten()
+            non_zero_indices = np.nonzero(row)[0]
+            expected_latent_indices = gt_features.pidx2lidx[pidx]
+            self.assertEqual(set(non_zero_indices), set(expected_latent_indices),
+                             f"Row {pidx} of ground truth feature matrix has incorrect non-zero entries")
+
 
 class TestPercolationDatasetProperties(unittest.TestCase):
     """Validate the properties of the generated dataset."""
