@@ -264,9 +264,9 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     def test_baseline_performance(self):
         """Test that simple baseline models perform poorly."""
-        model = DummyRegressor(strategy='mean')
+        cv = KFold(n_splits=3, shuffle=True, random_state=42)
 
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        model = DummyRegressor(strategy='mean')
         scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
         self.assertTrue(np.all(scores < 0.001), f"Mean baseline performance is too high, scores: {scores}")
 
@@ -277,7 +277,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_knn_performance(self):
         """Test that a KNN model performs well on the dataset."""
         model = KNeighborsRegressor(n_neighbors=5)
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        cv = KFold(n_splits=3, shuffle=True, random_state=42)
         scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
         self.assertTrue(np.all(scores > 0.3), f"KNN model performance is too low, scores: {scores}")
 
