@@ -77,7 +77,7 @@ class PercolationDataset:
                       level=level, depth=node.depth + 1)
 
         # Clear neighbors of the current node as they are being redistributed
-        neighbors = list(node.neighbors)
+        neighbors = sorted(list(node.neighbors), key=lambda n: n.point_idx)
         node.neighbors.clear()
 
         groups = self.rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
@@ -177,18 +177,6 @@ class PercolationDataset:
         points.sort(key=len, reverse=True)
         return points, latents
 
-    @staticmethod
-    def build_cluster_graph(cluster_points: Dict[int, 'Node']) -> Dict[int, List[int]]:
-        """
-        Builds the graph structure from points.
-        Returns an adjacency dictionary mapping node idx to list of neighbor indices.
-        """
-        adj = {idx: [] for idx in cluster_points}
-        for point in cluster_points.values():
-            for neighbor in point.neighbors:
-                adj[point.point_idx].append(neighbor.point_idx)
-        return adj
-
     def embed(self, points: List[Dict[int, 'Node']], d: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Embeds the points into a vector space using a tree random walk.
@@ -207,16 +195,15 @@ class PercolationDataset:
         if not points or not points[0]:
             return np.empty((0, d)), np.array([])
         
+        all_labels = []
         all_nodes = []
         all_embeddings = {}
-        all_labels = []
 
         size = sum(len(cluster_points) for cluster_points in points)
         scale = size**-0.25
         ratio = self.value_generator_kwargs['ratio']
         for cluster_points in points:
-            adj = self.build_cluster_graph(cluster_points)
-
+            
             for point in cluster_points.values():
                 irreducible_variance = ratio**(point.depth  + 1)
                 irreducible_std = np.sqrt(irreducible_variance)
@@ -235,12 +222,12 @@ class PercolationDataset:
 
             while stack:
                 parent = stack.pop()
-                for child in adj[parent]:
-                    if child not in visited:
-                        visited.add(child)
-                        assert child not in embeddings
-                        embeddings[child] = embeddings[parent] + self.rng.normal(0, scale, size=d)
-                        stack.append(child)
+                for neighbor in sorted(cluster_points[parent].neighbors, key=lambda n: n.point_idx):
+                    if neighbor.point_idx not in visited:
+                        visited.add(neighbor.point_idx)
+                        embeddings[neighbor.point_idx] = embeddings[parent] + self.rng.normal(0, scale, size=d)
+                        stack.append(neighbor.point_idx)
+            assert len(embeddings) == len(cluster_points)
             
             all_nodes.extend(nodes)
             all_embeddings.update(embeddings)

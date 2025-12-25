@@ -80,11 +80,11 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         """Test that using the same RNG seed produces identical datasets."""
         rng1 = np.random.default_rng(123)
         ds1 = PercolationDataset(rng=rng1)
-        points1, latents1 = ds1.construct(size=10)
+        points1, latents1, X1, y1 = ds1.construct_embed(size=100, d=10)
 
         rng2 = np.random.default_rng(123)
         ds2 = PercolationDataset(rng=rng2)
-        points2, latents2 = ds2.construct(size=10)
+        points2, latents2, X2, y2 = ds2.construct_embed(size=100, d=10)
 
         # Compare points
         for cluster1, cluster2 in zip(points1, points2):
@@ -103,13 +103,23 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             self.assertEqual(node1.value, node2.value)
             self.assertEqual(node1.level, node2.level)
 
+        # Compare embeddings
+        self.assertTrue(np.array_equal(X1, X2), "Embeddings are not reproducible with the same RNG seed")
+
+        # Compare labels
+        self.assertTrue(np.array_equal(y1, y2), "Labels are not reproducible with the same RNG seed")
+
+
     def test_neighbor_graph_is_tree(self):
         """Test that the graph formed by neighboring points is a tree."""
-        # Generate a reasonably sized graph
-        points, _ = self.dataset.construct(size=100)
-        adj = self.dataset.build_cluster_graph(points[0])
-        G = nx.Graph(adj) # type: ignore[arg-type]
-        self.assertTrue(nx.is_tree(G), "Neighbor graph is not a tree (it should be connected and acyclic)")
+        points, _ = self.dataset.construct(size=1000)
+        for cluster_points in points:
+            adj = {idx: [] for idx in cluster_points}
+            for point in cluster_points.values():
+                for neighbor in point.neighbors:
+                    adj[point.point_idx].append(neighbor.point_idx)
+            G = nx.Graph(adj) # type: ignore[arg-type]
+            self.assertTrue(nx.is_tree(G), "Neighbor graph is not a tree (it should be connected and acyclic)")
 
     def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
@@ -238,8 +248,8 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_embedding_distribution(self):
         """Test that the embeddings have approximately zero mean and consistent standard deviations."""
         self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), "Embeddings do not have mean close to 0")
-        # ptp = "peak to peak" = max - min
-        self.assertLess(np.ptp(self.X.std(axis=0)), 0.1, "Embeddings do not have consistent standard deviations")
+        relative_std = self.X.std(axis=0).std() / self.X.std(axis=0).mean()
+        self.assertLess(relative_std, 0.1, "Embeddings do not have consistent standard deviations")
 
     def test_label_distribution(self):
         """Test that the regression labels have approximately zero mean and unit standard deviation."""
@@ -269,7 +279,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         model = KNeighborsRegressor(n_neighbors=5)
         cv = KFold(n_splits=5, shuffle=True, random_state=42)
         scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
-        self.assertTrue(np.all(scores > 0.2), f"KNN model performance is too low, scores: {scores}")
+        self.assertTrue(np.all(scores > 0.3), f"KNN model performance is too low, scores: {scores}")
 
     def test_ground_truth_features(self):
         """Test that ground truth features are correctly computed."""
