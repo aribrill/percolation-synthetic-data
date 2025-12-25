@@ -276,7 +276,7 @@ class GroundTruthFeatures:
         Args:
             n_features: Number of features to return, in generation order. If None, returns all features.
         Returns:            
-            X: Sparse matrix of shape (n_points, n_features).
+            features: Sparse matrix of shape (n_points, n_features).
         """
         if n_features is None:
             n_features = self.n_latents
@@ -289,5 +289,5 @@ class GroundTruthFeatures:
             row_ind.extend(pidx)
             col_ind.extend(np.full_like(pidx, lidx))
 
-        X = sparse.csr_matrix((data, (row_ind, col_ind)), shape=(self.n_samples, n_features))
-        return X
+        features = sparse.csr_matrix((data, (row_ind, col_ind)), shape=(self.n_samples, n_features))
+        return features
