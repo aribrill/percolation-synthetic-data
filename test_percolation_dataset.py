@@ -311,6 +311,15 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         for k, v in self.ground_truth_features.lidx2latent.items():
             self.assertEqual(k, self.ground_truth_features.latent2lidx[self.ground_truth_features.lidx2latent[k]],
                              "lidx2latent and latent2lidx do not match")
+            
+    def test_point_values_match_labels(self):
+        """Test that point values match labels."""
+        point_labels = []
+        for cluster_points in self.points:
+            for p in cluster_points.values():
+                point_labels.append(p.value + p.error)
+        point_labels = np.array(point_labels)
+        self.assertTrue(np.allclose(point_labels, self.y), "Point values do not match labels")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
