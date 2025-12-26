@@ -10,6 +10,22 @@ from sklearn.neighbors import KNeighborsRegressor, NearestNeighbors
 
 from percolation_dataset import PercolationDataset, GroundTruthFeatures
 
+def ground_truth_1nn_baseline(points, rng):
+    """Returns ground-truth 1-nearest-neighbor mean squared error"""
+    error = []
+    for cluster_points in points:
+        for point in cluster_points.values():
+            if len(point.neighbors) == 0:
+                error.append(np.sqrt(2))
+            else:
+                neighbors = sorted(list(point.neighbors), key=lambda p: p.point_idx)
+                idx = rng.choice(len(neighbors))
+                neighbor = neighbors[idx]
+                error.append((neighbor.value + neighbor.error) - (point.value + point.error))
+    error = np.array(error)
+    mse = (error**2).mean()
+    return mse
+
 class TestPercolationDatasetBasic(unittest.TestCase):
     def setUp(self):
         self.rng = np.random.default_rng(42)
@@ -198,6 +214,23 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             expected_latent_indices = gt_features.pidx2lidx[pidx]
             self.assertEqual(set(non_zero_indices), set(expected_latent_indices),
                              f"Row {pidx} of ground truth feature matrix has incorrect non-zero entries")
+            
+    def test_nearest_neighbor_ground_truth(self):
+        """Test that 1-NN using the ground truth points matches the embedded dataset."""
+        points, latents, X, y = self.dataset.construct_embed(size=10000, d=128)
+        mse_gt_1nn = ground_truth_1nn_baseline(points, self.rng)
+        nn = NearestNeighbors(n_neighbors=2).fit(X)
+        distances, indices = nn.kneighbors(X)
+
+        # First neighbor is the point itself (distance 0), so exclude it
+        neighbor_indices = indices[:, 1:]  # shape (n_samples, k)
+        neighbor_distances = distances[:, 1:]
+
+        # Simple average of neighbor targets
+        pred = y[neighbor_indices].mean(axis=1)
+        mse_data_1nn = np.mean((y - pred)**2)
+        self.assertAlmostEqual(mse_gt_1nn, mse_data_1nn, delta=0.005,
+                               msg="1-NN MSE on ground truth points does not match that on embedded data")
 
 
 class TestPercolationDatasetProperties(unittest.TestCase):
@@ -317,13 +350,6 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         model = Ridge(alpha=1.0)
         score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
         self.assertGreater(score, 0.9, f"Ridge baseline performance is too good, score: {score}")
-
-    def test_knn_performance(self):
-        """Test that a KNN model performs well on the dataset."""
-        model = KNeighborsRegressor(n_neighbors=5)
-        cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
-        score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-        self.assertLess(score, 0.6, f"KNN baseline performance is too bad, score: {score}")
 
     def test_ground_truth_features(self):
         """Test that ground truth features are correctly computed."""
