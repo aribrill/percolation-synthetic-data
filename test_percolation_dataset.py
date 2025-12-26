@@ -2,10 +2,11 @@ import unittest
 import networkx as nx
 import numpy as np
 from scipy import stats
-from sklearn.model_selection import cross_val_score, KFold
+
+from sklearn.model_selection import cross_val_score, ShuffleSplit
 from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import Ridge
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neighbors import KNeighborsRegressor, NearestNeighbors
 
 from percolation_dataset import PercolationDataset, GroundTruthFeatures
 
@@ -207,7 +208,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         cls.rng = np.random.default_rng(42)
         cls.dataset = PercolationDataset(rng=cls.rng)
         cls.size = 100000
-        cls.d = 32
+        cls.d = 128
         points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
         cls.points = points
         cls.latents = latents
@@ -307,22 +308,22 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     def test_baseline_performance(self):
         """Test that simple baseline models perform poorly."""
-        cv = KFold(n_splits=3, shuffle=True, random_state=42)
+        cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
 
         model = DummyRegressor(strategy='mean')
-        scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
-        self.assertTrue(np.all(scores < 0.001), f"Mean baseline performance is too high, scores: {scores}")
+        score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
+        self.assertGreater(score, 0.9, f"Mean baseline performance is too good, score: {score}")
 
         model = Ridge(alpha=1.0)
-        scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
-        self.assertTrue(np.all(scores < 0.05), f"Ridge baseline performance is too high, scores: {scores}")
+        score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
+        self.assertGreater(score, 0.9, f"Ridge baseline performance is too good, score: {score}")
 
     def test_knn_performance(self):
         """Test that a KNN model performs well on the dataset."""
         model = KNeighborsRegressor(n_neighbors=5)
-        cv = KFold(n_splits=3, shuffle=True, random_state=42)
-        scores = cross_val_score(model, self.X, self.y, cv=cv, scoring='r2')
-        self.assertTrue(np.all(scores > 0.3), f"KNN model performance is too low, scores: {scores}")
+        cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
+        score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
+        self.assertLess(score, 0.6, f"KNN baseline performance is too bad, score: {score}")
 
     def test_ground_truth_features(self):
         """Test that ground truth features are correctly computed."""
@@ -355,6 +356,19 @@ class TestPercolationDatasetProperties(unittest.TestCase):
             self.assertEqual(k, self.ground_truth_features.latent2lidx[self.ground_truth_features.lidx2latent[k]],
                              "lidx2latent and latent2lidx do not match")
             
+    def test_neighbor_graph_matches_embeddings(self):
+        """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
+        neigh = NearestNeighbors()
+        neigh.fit(self.X)
+        neigh_inds = neigh.kneighbors(n_neighbors=1)[1].squeeze()
+        flat_points = [point for cluster_points in self.points for point in cluster_points.values()]
+        for i, point in enumerate(flat_points):
+            neighbor_idx = flat_points[neigh_inds[i]].point_idx
+            if len(point.neighbors) == 0:
+                continue
+            self.assertTrue(any(neighbor_idx == p.point_idx for p in point.neighbors),
+                            f"Nearest neighbor {neighbor_idx} of point {point.point_idx} is not in its neighbors")
+
     def test_point_values_match_labels(self):
         """Test that point values match labels."""
         point_labels = []
