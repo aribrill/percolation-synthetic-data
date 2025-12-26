@@ -5,9 +5,11 @@ Generates statistically self-similar synthetic datasets based on a percolation c
 
 [in progress]
 
-## Derivation
+## Algorithm
 
-[in progress]
+This repository implements an algorithm to simulate a data distribution modeled as a critical percolation cluster distribution on a large high-dimensional lattice, using an explicitly hierarchical approach. The algorithm consists of two stages. First, in the generation stage, a set of percolation clusters is generated iteratively. Each iteration represents a single "fine-graining" step in which a single data point is decomposed into two related data points. The generation stage produces a set of undirected, treelike graphs representing the clusters, and a forest of binary latent features that denote each point's membership in a cluster or subcluster. Each point has an associated value that is a function of its latent subcluster membership features. Second, in the embedding stage, the graphs are embedded into a vector space following a branching random walk.
+
+In the generation stage, each iteration follows one of two alternatives. With probability `create_prob`, a new cluster with one point is created. Otherwise, an existing point is selected at random and removed, becoming a latent feature. This parent is replaced by two new child points connected to each other by a new edge. Call these points $a$ and $b$. The child points $a$ and $b$ are assigned values as a stochastic function of the parent's value. Each former neighbor of the parent is then connected to either $a$ with probability `split_prob`, or to $b$ with probability `1 - split_prob`. The parameter values that yield the correct cluster structure can be shown to be `create_prob = 1/3` and `split_prob = 0.2096414`. The derivations of these values and full details on the algorithm will be presented in a forthcoming publication.
 
 ## Usage
 
