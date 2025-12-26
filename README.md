@@ -34,7 +34,10 @@ features = sparse.load_npz("percolation_dataset_size<SIZE>_dim<DIM>_seed<SEED>_g
 
 ## Caveats
 
-[in progress]
+- This repository is under **active development** and subject to ongoing changes.
+- Because the data generation and embedding procedures are stochastic, any studies should be repeated using multiple datasets generated using different random seeds.
+- The embedding procedure relies on the statistical tendency of random vectors to be approximately orthogonal in high dimensions. An embedding dimension of O(100) or greater is recommended to avoid rare discrepancies between the nearest neighbors in the percolation graph structure and embedded data points.
+- A generated dataset represents a data distribution, i.e. the set of all possible data points that could theoretically be observed. To obtain a realistic analog of a machine learning dataset, only a tiny subset of a generated dataset should be used for training.
 
 ## More information
 
