@@ -381,19 +381,26 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         for k, v in self.ground_truth_features.lidx2latent.items():
             self.assertEqual(k, self.ground_truth_features.latent2lidx[self.ground_truth_features.lidx2latent[k]],
                              "lidx2latent and latent2lidx do not match")
-            
+                        
     def test_neighbor_graph_matches_embeddings(self):
         """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
-        neigh = NearestNeighbors()
-        neigh.fit(self.X)
-        neigh_inds = neigh.kneighbors(n_neighbors=1)[1].squeeze()
+        n_sample_points = 1000
+        sample_inds = self.rng.choice(self.size, size=n_sample_points, replace=False)
+        X_sq = np.sum(self.X**2, axis=1)
         flat_points = [point for cluster_points in self.points for point in cluster_points.values()]
-        for i, point in enumerate(flat_points):
-            neighbor_idx = flat_points[neigh_inds[i]].point_idx
-            if len(point.neighbors) == 0:
-                continue
-            self.assertTrue(any(neighbor_idx == p.point_idx for p in point.neighbors),
-                            f"Nearest neighbor {neighbor_idx} of point {point.point_idx} is not in its neighbors")
+        point_idx2flat_idx = {p.point_idx: i for i, p in enumerate(flat_points)}
+        for idx in sample_inds:
+            point = flat_points[idx]
+            neighbors = [p for p in point.neighbors]
+            neighbor_inds = np.array([point_idx2flat_idx[p.point_idx] for p in neighbors], dtype=int)
+            is_neighbor = np.zeros(self.size, dtype=bool)
+            is_neighbor[neighbor_inds] = True
+            is_neighbor[idx] = True # exclude self
+            dists_sq = X_sq[idx] + X_sq - 2*self.X[idx] @ self.X.T
+            max_neighbor = dists_sq[is_neighbor].max()
+            min_non_neighbor = dists_sq[~is_neighbor].min()
+            self.assertGreater(min_non_neighbor, max_neighbor,
+                               f"Nearest embedded neighbors of point {point.point_idx} are not nearest graph neighbors")
 
     def test_point_values_match_labels(self):
         """Test that point values match labels."""
