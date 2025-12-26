@@ -3,6 +3,12 @@ Generates statistically self-similar synthetic datasets based on a percolation c
 
 ## About
 
+Ambitious mechanistic interpretability requires understanding the structure that neural networks uncover from data. A quantitative theoretical model of natural data's organizing structure could help AI safety researchers build interpretability tools that decompose neural networks along their natural scales of abstraction. This project works towards this goal by developing a synthetic data model that reproduces qualitative features of natural data. The model is based on high-dimensional percolation theory and describes statistically self-similar, sparse, and power-law-distributed data distributional structure.
+
+This repository provides code to generate synthetic datasets based on this data model. In particular, it employs a newly developed algorithm to construct a dataset in a way that explicitly and iteratively reveals its innate hierarchical structure. Increasing the number of data points corresponds to representing the same dataset at a more fine-grained level of abstraction.
+
+## Percolation Theory
+
 [in progress]
 
 ## Algorithm
