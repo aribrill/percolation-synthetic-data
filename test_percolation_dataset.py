@@ -231,6 +231,20 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         mse_data_1nn = np.mean((y - pred)**2)
         self.assertAlmostEqual(mse_gt_1nn, mse_data_1nn, delta=0.005,
                                msg="1-NN MSE on ground truth points does not match that on embedded data")
+        
+    def test_ratio_effect_on_loss(self):
+        """Test that increasing ratio increases baseline MSE."""
+        size = 1000
+        points_01, _latents01, _X01, _y01 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.1}).construct_embed(size=size, d=16)
+        points_05, _latents05, _X05, _y05 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.5}).construct_embed(size=size, d=16)
+        points_09, _latents09, _X09, _y09 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.9}).construct_embed(size=size, d=16)
+
+        mse_01 = ground_truth_1nn_baseline(points_01, self.rng)
+        mse_05 = ground_truth_1nn_baseline(points_05, self.rng)
+        mse_09 = ground_truth_1nn_baseline(points_09, self.rng)
+
+        self.assertLess(mse_01, mse_05, "MSE with ratio=0.1 should be less than MSE with ratio=0.5")
+        self.assertLess(mse_05, mse_09, "MSE with ratio=0.5 should be less than MSE with ratio=0.9")
 
 
 class TestPercolationDatasetProperties(unittest.TestCase):
