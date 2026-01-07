@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import islice
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -102,22 +102,6 @@ class PercolationDataset:
 
         return child1, child2
     
-    def _select_cluster(self, cluster_sizes: NDArray[np.int64], n_clusters: int) -> int:
-        """
-        Selects a cluster using size-proportional weighting.
-        
-        Args:
-            cluster_sizes: Array of cluster sizes with trailing zeros.
-            n_clusters: Number of clusters.
-
-        Returns:
-            idx: Index of the selected cluster. 
-        """
-        # TODO: implement efficient selection using Fenwick tree and numba
-        weights = cluster_sizes[:n_clusters] / cluster_sizes[:n_clusters].sum()
-        idx = self.rng.choice(n_clusters, p=weights)
-        return idx
-
     def construct(self, size: int) -> Tuple[List['Node'], Dict[int, 'Node']]:
         """
         Constructs the dataset by iteratively splitting nodes.
@@ -135,64 +119,43 @@ class PercolationDataset:
         point_idx = 0
         cluster_idx = 0
         root = Node(point_idx, cluster_idx, value=self.value_generator(0, -1, self.rng, **self.value_generator_kwargs))
-        points: List[Dict[int, Node]] = [{root.point_idx: root}]
-        cluster_sizes = np.zeros(size, dtype=int)
-        cluster_sizes[0] = 1
-        keys: List[List[int]] = [[point_idx]]
+        points: List[Node] = [root]
         latents: Dict[int, Node] = {}
 
-        rvs = self.rng.random(size=size)
+        rvs = self.rng.random(size=(size, 2))
         for i in range(1, size):
-            if rvs[i] < self.create_prob:
+            if rvs[i, 0] < self.create_prob:
                 node = Node(point_idx + 1, cluster_idx + 1, level=i,
                             value=self.value_generator(0, -1, self.rng, **self.value_generator_kwargs))
-                points.append({point_idx + 1: node})
-                cluster_sizes[cluster_idx + 1] = 1
-                keys.append([point_idx + 1])
+                points.append(node)
                 point_idx += 1
                 cluster_idx += 1
             else:
-                cluster_split_idx = self._select_cluster(cluster_sizes, cluster_idx + 1)
-                keys_idx = self.rng.choice(len(keys[cluster_split_idx]))
-                point_split_idx = keys[cluster_split_idx][keys_idx]
-                split_node = points[cluster_split_idx][point_split_idx]
-
+                split_idx = int(rvs[i, 1] * i)
+                split_node = points[split_idx]
                 child1, child2 = self._split_node(split_node, point_idx + 1, point_idx + 2, i)
+                latents[split_node.point_idx] = split_node
 
-                del points[cluster_split_idx][point_split_idx]
-                points[cluster_split_idx][child1.point_idx] = child1
-                points[cluster_split_idx][child2.point_idx] = child2
-                latents[point_split_idx] = split_node
-
-                # Swap-remove to update keys in O(1)
-                keys[cluster_split_idx][keys_idx] = keys[cluster_split_idx][-1]
-                keys[cluster_split_idx].pop()
-                keys[cluster_split_idx].append(point_idx + 1)
-                keys[cluster_split_idx].append(point_idx + 2)
-
-                cluster_sizes[cluster_split_idx] += 1
-
+                # Swap-remove to update points in O(1)
+                points[split_idx], points[-1] = points[-1], points[split_idx]
+                points.pop()
+                points.append(child1)
+                points.append(child2)                
                 point_idx += 2
 
-        # Sort clusters by size descending
-        points.sort(key=len, reverse=True)
+        # Sort points by cluster in descending order of cluster size
+        counts = Counter(p.cluster_idx for p in points)
+        points.sort(key=lambda p: (-counts[p.cluster_idx], p.cluster_idx, p.point_idx))
 
         # Compute irreducible error
         ratio = self.value_generator_kwargs['ratio']
-        for cluster_points in points:
-            for point in cluster_points.values():
-                irreducible_variance = ratio**(point.depth + 1)
-                irreducible_std = np.sqrt(irreducible_variance)
-                irreducible_error = self.rng.normal(0, irreducible_std)
-                point.error = irreducible_error
+        for point in points:
+            irreducible_variance = ratio**(point.depth + 1)
+            irreducible_std = np.sqrt(irreducible_variance)
+            irreducible_error = self.rng.normal(0, irreducible_std)
+            point.error = irreducible_error
 
-        # Flatten points list
-        flat_points = []
-        for cluster_points in points:
-            for point in cluster_points.values():
-                flat_points.append(point)
-
-        return flat_points, latents
+        return points, latents
 
     def embed(self, points: List['Node'], d: int) -> Tuple[np.ndarray, np.ndarray]:
         """
