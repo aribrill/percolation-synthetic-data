@@ -175,6 +175,16 @@ class PercolationDataset:
                 point_idx += 2
 
         points.sort(key=len, reverse=True)
+
+        # Compute irreducible error
+        ratio = self.value_generator_kwargs['ratio']
+        for cluster_points in points:
+            for point in cluster_points.values():
+                irreducible_variance = ratio**(point.depth + 1)
+                irreducible_std = np.sqrt(irreducible_variance)
+                irreducible_error = self.rng.normal(0, irreducible_std)
+                point.error = irreducible_error
+
         return points, latents
 
     def embed(self, points: List[Dict[int, 'Node']], d: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -201,14 +211,9 @@ class PercolationDataset:
 
         size = sum(len(cluster_points) for cluster_points in points)
         scale = size**-0.25
-        ratio = self.value_generator_kwargs['ratio']
         for cluster_points in points:
             
             for point in cluster_points.values():
-                irreducible_variance = ratio**(point.depth  + 1)
-                irreducible_std = np.sqrt(irreducible_variance)
-                irreducible_error = self.rng.normal(0, irreducible_std)
-                point.error = irreducible_error
                 all_labels.append(point.value + point.error)
 
             nodes = [point.point_idx for point in cluster_points.values()]
