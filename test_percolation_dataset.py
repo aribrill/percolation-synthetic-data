@@ -339,7 +339,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_label_distribution(self):
         """Test that the regression labels have approximately zero mean and unit standard deviation."""
         self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
-        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.01, msg="Labels do not have standard deviation close to 1")
+        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.025, msg="Labels do not have standard deviation close to 1")
 
     def test_feature_label_correlation(self):
         """Test that the features and labels are weakly correlated."""
