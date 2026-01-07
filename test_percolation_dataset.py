@@ -1,3 +1,6 @@
+from collections import Counter
+from typing import List
+
 import unittest
 import networkx as nx
 import numpy as np
@@ -6,22 +9,21 @@ from scipy import stats
 from sklearn.model_selection import cross_val_score, ShuffleSplit
 from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import Ridge
-from sklearn.neighbors import KNeighborsRegressor, NearestNeighbors
+from sklearn.neighbors import NearestNeighbors
 
-from percolation_dataset import PercolationDataset, GroundTruthFeatures
+from percolation_dataset import Node, PercolationDataset, GroundTruthFeatures
 
-def ground_truth_1nn_baseline(points, rng):
+def ground_truth_1nn_baseline(points: List['Node'], rng: np.random.Generator) -> float:
     """Returns ground-truth 1-nearest-neighbor mean squared error"""
     error = []
-    for cluster_points in points:
-        for point in cluster_points.values():
-            if len(point.neighbors) == 0:
-                error.append(np.sqrt(2))
-            else:
-                neighbors = sorted(list(point.neighbors), key=lambda p: p.point_idx)
-                idx = rng.choice(len(neighbors))
-                neighbor = neighbors[idx]
-                error.append((neighbor.value + neighbor.error) - (point.value + point.error))
+    for point in points:
+        if len(point.neighbors) == 0:
+            error.append(np.sqrt(2))
+        else:
+            neighbors = sorted(list(point.neighbors), key=lambda p: p.point_idx)
+            idx = rng.choice(len(neighbors))
+            neighbor = neighbors[idx]
+            error.append((neighbor.value + neighbor.error) - (point.value + point.error))
     error = np.array(error)
     mse = (error**2).mean()
     return mse
@@ -48,15 +50,14 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         points, latents = self.dataset.construct(size=size)
 
         # Verify counts
-        point_count = sum(len(cluster_points) for cluster_points in points)
-        cluster_count = len(points)
+        point_count = len(points)
+        cluster_count = len(np.unique([p.cluster_idx for p in points]))
         self.assertEqual(point_count, size, "Incorrect number of points (leaves)")
         self.assertEqual(len(latents), size - cluster_count, "Incorrect number of latents (internal nodes)")
 
         # Verify node types
-        for cluster_points in points:
-            for p in cluster_points.values():
-                self.assertEqual(p.node_type, 'point')
+        for p in points:
+            self.assertEqual(p.node_type, 'point')
         for l in latents.values():
             self.assertEqual(l.node_type, 'latent')
 
@@ -88,10 +89,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         points, latents = ds.construct(size=5)
 
         # Nodes generated via split (level > 0) should have value 100.0
-        for cluster_points in points:
-            for p in cluster_points.values():
-                if p.level > 0:
-                    self.assertEqual(p.value, 100.0)
+        for p in points:
+            if p.level > 0:
+                self.assertEqual(p.value, 100.0)
 
     def test_rng_reproducibility(self):
         """Test that using the same RNG seed produces identical datasets."""
@@ -104,13 +104,11 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         points2, latents2, X2, y2 = ds2.construct_embed(size=100, d=10)
 
         # Compare points
-        for cluster1, cluster2 in zip(points1, points2):
-            self.assertEqual(len(cluster1), len(cluster2))
-            for idx in cluster1:
-                node1 = cluster1[idx]
-                node2 = cluster2[idx]
-                self.assertEqual(node1.value, node2.value)
-                self.assertEqual(node1.level, node2.level)
+        for p1, p2 in zip(points1, points2):
+            self.assertEqual(p1.point_idx, p2.point_idx)
+            self.assertEqual(p1.cluster_idx, p2.cluster_idx)
+            self.assertEqual(p1.value, p2.value)
+            self.assertEqual(p1.level, p2.level)
 
         # Compare latents
         self.assertEqual(len(latents1), len(latents2))
@@ -130,13 +128,17 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_neighbor_graph_is_tree(self):
         """Test that the graph formed by neighboring points is a tree."""
         points, _ = self.dataset.construct(size=1000)
-        for cluster_points in points:
-            adj = {idx: [] for idx in cluster_points}
-            for point in cluster_points.values():
+        start_idx, end_idx = 0, 0
+        while start_idx < len(points):
+            while end_idx < len(points) and points[end_idx].cluster_idx == points[start_idx].cluster_idx:
+                end_idx += 1
+            adj = {points[i].point_idx: [] for i in range(start_idx, end_idx)}
+            for point in points[start_idx:end_idx]:
                 for neighbor in point.neighbors:
                     adj[point.point_idx].append(neighbor.point_idx)
             G = nx.Graph(adj) # type: ignore[arg-type]
             self.assertTrue(nx.is_tree(G), "Neighbor graph is not a tree (it should be connected and acyclic)")
+            start_idx = end_idx
 
     def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
@@ -144,10 +146,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         G = nx.DiGraph()
 
         # Collect all nodes involved
-        for cluster_points in points:
-            for node in cluster_points.values():
-                for child in node.children:
-                    G.add_edge(node.point_idx, child.point_idx)
+        for node in points:
+            for child in node.children:
+                G.add_edge(node.point_idx, child.point_idx)
         for node in latents.values():
             for child in node.children:
                 G.add_edge(node.point_idx, child.point_idx)
@@ -161,10 +162,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         G = nx.DiGraph()
 
         # Collect all nodes involved
-        for cluster_points in points:
-            for node in cluster_points.values():
-                for child in node.children:
-                    G.add_edge(node.point_idx, child.point_idx)
+        for node in points:
+            for child in node.children:
+                G.add_edge(node.point_idx, child.point_idx)
         for node in latents.values():
             for child in node.children:
                 G.add_edge(node.point_idx, child.point_idx)
@@ -256,6 +256,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
         cls.points = points
         cls.latents = latents
+        cls.cluster_sizes = Counter([p.cluster_idx for p in points])
         cls.X = X
         cls.y = y
         cls.ground_truth_features = GroundTruthFeatures(points, latents)
@@ -264,10 +265,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
         # Get degrees, skipping small clusters
         size_threshold = 100
-        degrees = []
-        for cluster_points in self.points:
-            if len(cluster_points) >= size_threshold:
-                degrees.extend([len(node.neighbors) for node in cluster_points.values()])
+        degrees = [len(node.neighbors) for node in self.points if self.cluster_sizes[node.cluster_idx] >= size_threshold]
 
         # Calculate empirical PMF
         val, counts = np.unique(degrees, return_counts=True)
@@ -296,8 +294,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         """Test that size distribution is well fit by a power law using maximum likelihood."""
         # Get sizes of clusters
         size_threshold = 10
-        sizes = np.array([len(cluster_points) for cluster_points in self.points])
-        sizes = sizes[sizes >= size_threshold]
+        sizes = np.array([size for size in self.cluster_sizes.values() if size >= size_threshold])
 
         # Estimate power-law exponent using MLE
         alpha = 1 + len(sizes)*np.sum(np.log(sizes/size_threshold))**-1
@@ -398,12 +395,11 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         n_sample_points = 1000
         sample_inds = self.rng.choice(self.size, size=n_sample_points, replace=False)
         X_sq = np.sum(self.X**2, axis=1)
-        flat_points = [point for cluster_points in self.points for point in cluster_points.values()]
-        point_idx2flat_idx = {p.point_idx: i for i, p in enumerate(flat_points)}
+        point_idx2idx = {p.point_idx: i for i, p in enumerate(self.points)}
         for idx in sample_inds:
-            point = flat_points[idx]
+            point = self.points[idx]
             neighbors = [p for p in point.neighbors]
-            neighbor_inds = np.array([point_idx2flat_idx[p.point_idx] for p in neighbors], dtype=int)
+            neighbor_inds = np.array([point_idx2idx[p.point_idx] for p in neighbors], dtype=int)
             is_neighbor = np.zeros(self.size, dtype=bool)
             is_neighbor[neighbor_inds] = True
             is_neighbor[idx] = True # exclude self
@@ -415,11 +411,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     def test_point_values_match_labels(self):
         """Test that point values match labels."""
-        point_labels = []
-        for cluster_points in self.points:
-            for p in cluster_points.values():
-                point_labels.append(p.value + p.error)
-        point_labels = np.array(point_labels)
+        point_labels = np.array([p.value + p.error for p in self.points])
         self.assertTrue(np.allclose(point_labels, self.y), "Point values do not match labels")
 
 if __name__ == '__main__':
