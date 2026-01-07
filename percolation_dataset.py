@@ -1,5 +1,5 @@
 from collections import defaultdict
-from itertools import chain, islice
+from itertools import islice
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -118,7 +118,7 @@ class PercolationDataset:
         idx = self.rng.choice(n_clusters, p=weights)
         return idx
 
-    def construct(self, size: int) -> Tuple[List[Dict[int, 'Node']], Dict[int, 'Node']]:
+    def construct(self, size: int) -> Tuple[List['Node'], Dict[int, 'Node']]:
         """
         Constructs the dataset by iteratively splitting nodes.
 
@@ -126,7 +126,7 @@ class PercolationDataset:
             size: The number of leaf nodes (points) to generate.
 
         Returns:
-            points: Dictionary of leaf nodes.
+            points: List of data points.
             latents: Dictionary of latent (internal) nodes.
         """
         if size < 1:
@@ -174,6 +174,7 @@ class PercolationDataset:
 
                 point_idx += 2
 
+        # Sort clusters by size descending
         points.sort(key=len, reverse=True)
 
         # Compute irreducible error
@@ -185,14 +186,20 @@ class PercolationDataset:
                 irreducible_error = self.rng.normal(0, irreducible_std)
                 point.error = irreducible_error
 
-        return points, latents
+        # Flatten points list
+        flat_points = []
+        for cluster_points in points:
+            for point in cluster_points.values():
+                flat_points.append(point)
 
-    def embed(self, points: List[Dict[int, 'Node']], d: int) -> Tuple[np.ndarray, np.ndarray]:
+        return flat_points, latents
+
+    def embed(self, points: List['Node'], d: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Embeds the points into a vector space using a tree random walk.
 
         Args:
-            points: Dictionary of leaf nodes.
+            points: List of data points.
             d: Dimension of the embedding space.
 
         Returns:
@@ -202,47 +209,43 @@ class PercolationDataset:
         if d < 1:
              raise ValueError(f"Embedding dimension d must be at least 1, got {d}")
 
-        if not points or not points[0]:
+        if not points:
             return np.empty((0, d)), np.array([])
-        
-        all_labels = []
-        all_nodes = []
-        all_embeddings = {}
 
-        size = sum(len(cluster_points) for cluster_points in points)
+        size = len(points)
         scale = size**-0.25
-        for cluster_points in points:
-            
-            for point in cluster_points.values():
-                all_labels.append(point.value + point.error)
+        start_idx, end_idx = 0, 0
+        point_idx2idx = {point.point_idx: i for i, point in enumerate(points)}
+        embeddings = {}
 
-            nodes = [point.point_idx for point in cluster_points.values()]
-
-            root = self.rng.choice(nodes)
-            embeddings = {root: self.rng.uniform(low=-0.5, high=0.5, size=d)}
+        while start_idx < size:
+            # Randomly choose root for current cluster
+            while end_idx < size and points[end_idx].cluster_idx == points[start_idx].cluster_idx:
+                end_idx += 1
+            root_idx = self.rng.choice(end_idx - start_idx) + start_idx
+            root = points[root_idx].point_idx
 
             # DFS using stack
             stack = [root]
             visited = {root}
+            embeddings[root] = self.rng.uniform(low=-0.5, high=0.5, size=d)
 
             while stack:
                 parent = stack.pop()
-                for neighbor in sorted(cluster_points[parent].neighbors, key=lambda n: n.point_idx):
+                for neighbor in sorted(points[point_idx2idx[parent]].neighbors, key=lambda n: n.point_idx):
                     if neighbor.point_idx not in visited:
                         visited.add(neighbor.point_idx)
                         embeddings[neighbor.point_idx] = embeddings[parent] + self.rng.normal(0, scale, size=d)
                         stack.append(neighbor.point_idx)
-            assert len(embeddings) == len(cluster_points)
             
-            all_nodes.extend(nodes)
-            all_embeddings.update(embeddings)
+            start_idx = end_idx
 
-        X = np.stack([all_embeddings[node] for node in all_nodes])
-        y = np.array(all_labels)
-
+        X = np.stack([embeddings[point.point_idx] for point in points])
+        y = np.array([point.value + point.error for point in points])
         return X, y
 
-    def construct_embed(self, size: int, d: int) -> Tuple[List[Dict[int, 'Node']], Dict[int, 'Node'], np.ndarray, np.ndarray]:
+
+    def construct_embed(self, size: int, d: int) -> Tuple[List['Node'], Dict[int, 'Node'], np.ndarray, np.ndarray]:
         """Convenience method to construct the dataset and generate embeddings."""
         points, latents = self.construct(size)
         embeddings, labels = self.embed(points, d)
@@ -251,7 +254,7 @@ class PercolationDataset:
 class GroundTruthFeatures:
     """Generates ground truth features from generated percolation data."""
 
-    def __init__(self, points: List[Dict[int, Node]], latents: Dict[int, Node]):
+    def __init__(self, points: List['Node'], latents: Dict[int, 'Node']):
         self.points = points
         self.latents = latents
         
@@ -261,7 +264,7 @@ class GroundTruthFeatures:
         self.latent2lidx = {latent.point_idx: i for i, latent in enumerate(sorted_latents.values())}
         self.lidx2latent = {i: latent.point_idx for i, latent in enumerate(sorted_latents.values())}
 
-        for i, point in enumerate(chain.from_iterable(cp.values() for cp in points)):
+        for i, point in enumerate(points):
             parents = point.parents
             while parents:
                 latent = list(parents)[0]
@@ -271,7 +274,7 @@ class GroundTruthFeatures:
                 parents = latent.parents
             self.pidx2lidx[i].reverse()
         self.lidx2pidx = dict(sorted(self.lidx2pidx.items(), key=lambda item: item[0]))
-        self.n_samples = sum(len(cp) for cp in self.points)
+        self.n_samples = len(self.points)
         self.n_latents = len(self.lidx2pidx)
 
     def get_features(self, n_features: Optional[int] = None) -> sparse.csr_matrix:
