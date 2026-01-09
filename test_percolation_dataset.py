@@ -66,7 +66,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size = 20
         d = 5
         points, latents = self.dataset.construct(size=size)
-        X, y = self.dataset.embed(points, d=d)
+        X, y = self.dataset.embed(points, latents, d=d)
 
         self.assertEqual(X.shape, (size, d))
         self.assertEqual(y.shape, (size,))
@@ -76,9 +76,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.dataset.construct(size=0)
 
-        points, _ = self.dataset.construct(size=5)
+        points, latents = self.dataset.construct(size=5)
         with self.assertRaises(ValueError):
-            self.dataset.embed(points, d=0)
+            self.dataset.embed(points, latents, d=0)
 
     def test_custom_value_generator(self):
         """Test that a custom value generator is correctly utilized."""

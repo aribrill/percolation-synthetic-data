@@ -23,10 +23,10 @@ class Node:
         self.parents: Set['Node'] = set(parents) if parents is not None else set()
         self.children: Set['Node'] = set(children) if children is not None else set()
         self.neighbors: Set['Node'] = set(neighbors) if neighbors is not None else set()
-        self.value = value
-        self.level = level
-        self.depth = depth
-        self.error = 0.0
+        self.value: float = value
+        self.level: int = level
+        self.depth: int = depth
+        self.error: float = 0.0
 
     def __repr__(self) -> str:
         return f"Node(point_idx={self.point_idx}, type={self.node_type}, value={self.value:.2f})"
@@ -157,7 +157,7 @@ class PercolationDataset:
 
         return points, latents
 
-    def embed(self, points: List['Node'], d: int) -> Tuple[np.ndarray, np.ndarray]:
+    def embed(self, points: List['Node'], latents: Dict[int, 'Node'], d: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Embeds the points into a vector space using a tree random walk.
 
@@ -174,6 +174,24 @@ class PercolationDataset:
 
         if not points:
             return np.empty((0, d)), np.array([])
+        
+        # Compute base embedding direction for each cluster
+        cluster_vectors = {}
+        for cluster_idx in np.unique([point.cluster_idx for point in points]):
+            vec = self.rng.normal(size=d)
+            cluster_vectors[cluster_idx] = vec / np.linalg.norm(vec)
+
+        # Assign directions using latents to embed points self-consistently with scale
+        point_vectors = {}
+        for point_idx, latent in latents.items():
+            if point_idx not in point_vectors:
+                point_vectors[point_idx] = cluster_vectors[latent.cluster_idx]
+            u = self.rng.normal(size=d)
+            w = u - (u @ point_vectors[point_idx])*point_vectors[point_idx] # project to orthogonal complement
+            w /= np.linalg.norm(w)
+            child_vectors = [np.sqrt(0.5)*(point_vectors[point_idx] + w), np.sqrt(0.5)*(point_vectors[point_idx] - w)]
+            for child, vector in zip(sorted(latent.children, key=lambda c: c.point_idx), child_vectors):
+                point_vectors[child.point_idx] = vector
 
         size = len(points)
         scale = size**-0.25
@@ -182,23 +200,29 @@ class PercolationDataset:
         embeddings = {}
 
         while start_idx < size:
-            # Randomly choose root for current cluster
+            # Find boundaries of current cluster
             while end_idx < size and points[end_idx].cluster_idx == points[start_idx].cluster_idx:
                 end_idx += 1
+
+            # Retrieve vector now for a single-point cluster with no latents
+            if end_idx - start_idx == 1:
+                point_vectors[points[start_idx].point_idx] = cluster_vectors[points[start_idx].cluster_idx]
+
+            # Randomly choose root in [start_idx, end_idx)
             root_idx = self.rng.choice(end_idx - start_idx) + start_idx
             root = points[root_idx].point_idx
 
             # DFS using stack
             stack = [root]
             visited = {root}
-            embeddings[root] = self.rng.uniform(low=-0.5, high=0.5, size=d)
+            embeddings[root] = self.rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
 
             while stack:
                 parent = stack.pop()
                 for neighbor in sorted(points[point_idx2idx[parent]].neighbors, key=lambda n: n.point_idx):
                     if neighbor.point_idx not in visited:
                         visited.add(neighbor.point_idx)
-                        embeddings[neighbor.point_idx] = embeddings[parent] + self.rng.normal(0, scale, size=d)
+                        embeddings[neighbor.point_idx] = embeddings[parent] + scale*point_vectors[neighbor.point_idx]
                         stack.append(neighbor.point_idx)
             
             start_idx = end_idx
@@ -211,7 +235,7 @@ class PercolationDataset:
     def construct_embed(self, size: int, d: int) -> Tuple[List['Node'], Dict[int, 'Node'], np.ndarray, np.ndarray]:
         """Convenience method to construct the dataset and generate embeddings."""
         points, latents = self.construct(size)
-        embeddings, labels = self.embed(points, d)
+        embeddings, labels = self.embed(points, latents, d)
         return points, latents, embeddings, labels
 
 class GroundTruthFeatures:
