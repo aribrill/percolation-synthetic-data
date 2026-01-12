@@ -35,14 +35,18 @@ class PercolationDataset:
     """Generates a percolation dataset."""
 
     def __init__(self, create_prob: float = 0.3333333, split_prob: float = 0.2096414,
-                 rng: Optional[np.random.Generator] = None,
+                 graph_seed: Optional[int] = None,
+                 embed_seed: Optional[int] = None,
+                 value_seed: Optional[int] = None,
                  value_generator: Optional[Callable[..., float]] = None,
                  value_generator_kwargs: Optional[Dict[str, Any]] = None):
         """
         Args:
             create_prob: Probability of creating a new cluster. Default is 1/3.
             split_prob: Probability of a neighbor connecting to the first child. Default is 0.2096414.
-            rng: Random number generator.
+            graph_seed: Seed for the random number generator used in graph construction.
+            embed_seed: Seed for the random number generator used in embedding.
+            value_seed: Seed for the random number generator used in value generation.
             value_generator: Function to generate values for new nodes.
                              Signature: (*args, **kwargs) -> float.
             value_generator_kwargs: Additional keyword arguments for value_generator. Default is {'ratio': 0.5}.
@@ -54,7 +58,9 @@ class PercolationDataset:
 
         self.create_prob = create_prob
         self.split_prob = split_prob
-        self.rng = rng if rng is not None else np.random.default_rng()
+        self.graph_rng = np.random.default_rng(graph_seed) if graph_seed is not None else np.random.default_rng()
+        self.embed_rng = np.random.default_rng(embed_seed) if embed_seed is not None else np.random.default_rng()
+        self.value_rng = np.random.default_rng(value_seed) if value_seed is not None else np.random.default_rng()
         self.value_generator = value_generator if value_generator is not None else self._default_generate_value
         self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.5}
 
@@ -66,9 +72,9 @@ class PercolationDataset:
 
     def _split_node(self, node: 'Node', idx_1: int, idx_2: int, level: int) -> Tuple['Node', 'Node']:
         # Use the configured value generator, passing the node and the dataset's rng
-        val1 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.rng,
+        val1 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.value_rng,
                                     **self.value_generator_kwargs)
-        val2 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.rng,
+        val2 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.value_rng,
                                     **self.value_generator_kwargs)
 
         child1 = Node(idx_1, node.cluster_idx, parents=[node], value=val1,
@@ -80,7 +86,7 @@ class PercolationDataset:
         neighbors = sorted(list(node.neighbors), key=lambda n: n.point_idx)
         node.neighbors.clear()
 
-        groups = self.rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
+        groups = self.graph_rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
         for n, group in zip(neighbors, groups):
             if group == 1:
                 n.neighbors.add(child1)
@@ -118,15 +124,15 @@ class PercolationDataset:
 
         point_idx = 0
         cluster_idx = 0
-        root = Node(point_idx, cluster_idx, value=self.value_generator(0, -1, self.rng, **self.value_generator_kwargs))
+        root = Node(point_idx, cluster_idx, value=self.value_generator(0, -1, self.value_rng, **self.value_generator_kwargs))
         points: List[Node] = [root]
         latents: Dict[int, Node] = {}
 
-        rvs = self.rng.random(size=(size, 2))
+        rvs = self.graph_rng.random(size=(size, 2))
         for i in range(1, size):
             if rvs[i, 0] < self.create_prob:
                 node = Node(point_idx + 1, cluster_idx + 1, level=i,
-                            value=self.value_generator(0, -1, self.rng, **self.value_generator_kwargs))
+                            value=self.value_generator(0, -1, self.value_rng, **self.value_generator_kwargs))
                 points.append(node)
                 point_idx += 1
                 cluster_idx += 1
@@ -152,7 +158,7 @@ class PercolationDataset:
         for point in points:
             irreducible_variance = ratio**(point.depth + 1)
             irreducible_std = np.sqrt(irreducible_variance)
-            irreducible_error = self.rng.normal(0, irreducible_std)
+            irreducible_error = self.value_rng.normal(0, irreducible_std)
             point.error = irreducible_error
 
         return points, latents
@@ -178,7 +184,7 @@ class PercolationDataset:
         # Compute base embedding direction for each cluster
         cluster_vectors = {}
         for cluster_idx in np.unique([point.cluster_idx for point in points]):
-            vec = self.rng.normal(size=d)
+            vec = self.embed_rng.normal(size=d)
             cluster_vectors[cluster_idx] = vec / np.linalg.norm(vec)
 
         # Assign directions using latents to embed points self-consistently with scale
@@ -186,7 +192,7 @@ class PercolationDataset:
         for point_idx, latent in latents.items():
             if point_idx not in point_vectors:
                 point_vectors[point_idx] = cluster_vectors[latent.cluster_idx]
-            u = self.rng.normal(size=d)
+            u = self.embed_rng.normal(size=d)
             w = u - (u @ point_vectors[point_idx])*point_vectors[point_idx] # project to orthogonal complement
             w /= np.linalg.norm(w)
             child_vectors = [np.sqrt(0.5)*(point_vectors[point_idx] + w), np.sqrt(0.5)*(point_vectors[point_idx] - w)]
@@ -209,13 +215,13 @@ class PercolationDataset:
                 point_vectors[points[start_idx].point_idx] = cluster_vectors[points[start_idx].cluster_idx]
 
             # Randomly choose root in [start_idx, end_idx)
-            root_idx = self.rng.choice(end_idx - start_idx) + start_idx
+            root_idx = self.graph_rng.choice(end_idx - start_idx) + start_idx
             root = points[root_idx].point_idx
 
             # DFS using stack
             stack = [root]
             visited = {root}
-            embeddings[root] = self.rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
+            embeddings[root] = self.embed_rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
 
             while stack:
                 parent = stack.pop()

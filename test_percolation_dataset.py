@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import List
+from typing import List, Optional
 
 import unittest
 import networkx as nx
@@ -13,8 +13,9 @@ from sklearn.neighbors import NearestNeighbors
 
 from percolation_dataset import Node, PercolationDataset, GroundTruthFeatures
 
-def ground_truth_1nn_baseline(points: List['Node'], rng: np.random.Generator) -> float:
+def ground_truth_1nn_baseline(points: List['Node'], seed: Optional[int] = None) -> float:
     """Returns ground-truth 1-nearest-neighbor mean squared error"""
+    rng = np.random.default_rng(seed) if seed is not None else np.random.default_rng()
     error = []
     for point in points:
         if len(point.neighbors) == 0:
@@ -30,8 +31,7 @@ def ground_truth_1nn_baseline(points: List['Node'], rng: np.random.Generator) ->
 
 class TestPercolationDatasetBasic(unittest.TestCase):
     def setUp(self):
-        self.rng = np.random.default_rng(42)
-        self.dataset = PercolationDataset(rng=self.rng)
+        self.dataset = PercolationDataset(graph_seed=0, embed_seed=1, value_seed=2)
 
     def test_initialization_validation(self):
         """Test that invalid create_prob and split_prob values raise ValueError."""
@@ -85,7 +85,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         def constant_gen(parent_value, parent_depth, rng, **kwargs):
             return 100.0
 
-        ds = PercolationDataset(value_generator=constant_gen, rng=self.rng)
+        ds = PercolationDataset(value_generator=constant_gen, value_seed=0)
         points, latents = ds.construct(size=5)
 
         # Nodes generated via split (level > 0) should have value 100.0
@@ -95,12 +95,10 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_rng_reproducibility(self):
         """Test that using the same RNG seed produces identical datasets."""
-        rng1 = np.random.default_rng(123)
-        ds1 = PercolationDataset(rng=rng1)
+        ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
         points1, latents1, X1, y1 = ds1.construct_embed(size=100, d=10)
 
-        rng2 = np.random.default_rng(123)
-        ds2 = PercolationDataset(rng=rng2)
+        ds2 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
         points2, latents2, X2, y2 = ds2.construct_embed(size=100, d=10)
 
         # Compare points
@@ -142,7 +140,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
-        points, latents = PercolationDataset(rng=self.rng, create_prob=0).construct(size=50)
+        points, latents = PercolationDataset(graph_seed=0, create_prob=0).construct(size=50)
         G = nx.DiGraph()
 
         # Collect all nodes involved
@@ -218,7 +216,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_nearest_neighbor_ground_truth(self):
         """Test that 1-NN using the ground truth points matches the embedded dataset."""
         points, _latents, X, y = self.dataset.construct_embed(size=10000, d=128)
-        mse_gt_1nn = ground_truth_1nn_baseline(points, self.rng)
+        mse_gt_1nn = ground_truth_1nn_baseline(points, seed=0)
         nn = NearestNeighbors(n_neighbors=2).fit(X)
         _distances, indices = nn.kneighbors(X)
 
@@ -232,13 +230,13 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_ratio_effect_on_loss(self):
         """Test that increasing ratio increases baseline MSE."""
         size = 1000
-        points_01, _latents01, _X01, _y01 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.1}).construct_embed(size=size, d=16)
-        points_05, _latents05, _X05, _y05 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.5}).construct_embed(size=size, d=16)
-        points_09, _latents09, _X09, _y09 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.9}).construct_embed(size=size, d=16)
+        points_01, _latents01, _X01, _y01 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.1}).construct_embed(size=size, d=16)
+        points_05, _latents05, _X05, _y05 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.5}).construct_embed(size=size, d=16)
+        points_09, _latents09, _X09, _y09 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.9}).construct_embed(size=size, d=16)
 
-        mse_01 = ground_truth_1nn_baseline(points_01, self.rng)
-        mse_05 = ground_truth_1nn_baseline(points_05, self.rng)
-        mse_09 = ground_truth_1nn_baseline(points_09, self.rng)
+        mse_01 = ground_truth_1nn_baseline(points_01, seed=42)
+        mse_05 = ground_truth_1nn_baseline(points_05, seed=42)
+        mse_09 = ground_truth_1nn_baseline(points_09, seed=42)
 
         self.assertLess(mse_01, mse_05, "MSE with ratio=0.1 should be less than MSE with ratio=0.5")
         self.assertLess(mse_05, mse_09, "MSE with ratio=0.5 should be less than MSE with ratio=0.9")
@@ -249,8 +247,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.rng = np.random.default_rng(42)
-        cls.dataset = PercolationDataset(rng=cls.rng)
+        cls.dataset = PercolationDataset(graph_seed=42, embed_seed=43, value_seed=44)
         cls.size = 100000
         cls.d = 128
         points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
@@ -393,7 +390,8 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_neighbor_graph_matches_embeddings(self):
         """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
         n_sample_points = 1000
-        sample_inds = self.rng.choice(self.size, size=n_sample_points, replace=False)
+        rng = np.random.default_rng(42)
+        sample_inds = rng.choice(self.size, size=n_sample_points, replace=False)
         X_sq = np.sum(self.X**2, axis=1)
         point_idx2idx = {p.point_idx: i for i, p in enumerate(self.points)}
         for idx in sample_inds:
