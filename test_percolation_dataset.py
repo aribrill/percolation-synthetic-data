@@ -66,9 +66,11 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size = 20
         d = 5
         points, latents = self.dataset.construct(size=size)
-        X, y = self.dataset.embed(points, latents, d=d)
 
+        X = self.dataset.embed_features(points, latents, d=d)
         self.assertEqual(X.shape, (size, d))
+
+        y = self.dataset.embed_labels(points, latents)
         self.assertEqual(y.shape, (size,))
 
     def test_input_validation_methods(self):
@@ -78,15 +80,16 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
         points, latents = self.dataset.construct(size=5)
         with self.assertRaises(ValueError):
-            self.dataset.embed(points, latents, d=0)
+            self.dataset.embed_features(points, latents, d=0)
 
     def test_custom_value_generator(self):
         """Test that a custom value generator is correctly utilized."""
-        def constant_gen(parent_value, parent_depth, rng, **kwargs):
+        def constant_gen(base_value, depth, rng, **kwargs):
             return 100.0
 
         ds = PercolationDataset(value_generator=constant_gen, value_seed=0)
         points, latents = ds.construct(size=5)
+        y = ds.embed_labels(points, latents)
 
         # Nodes generated via split (level > 0) should have value 100.0
         for p in points:

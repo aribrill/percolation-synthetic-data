@@ -58,35 +58,29 @@ class PercolationDataset:
 
         self.create_prob = create_prob
         self.split_prob = split_prob
-        self.graph_rng = np.random.default_rng(graph_seed) if graph_seed is not None else np.random.default_rng()
-        self.embed_rng = np.random.default_rng(embed_seed) if embed_seed is not None else np.random.default_rng()
-        self.value_rng = np.random.default_rng(value_seed) if value_seed is not None else np.random.default_rng()
+        self.graph_seed = graph_seed
+        self.embed_seed = embed_seed
+        self.value_seed = value_seed
         self.value_generator = value_generator if value_generator is not None else self._default_generate_value
         self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.5}
 
-    def _default_generate_value(self, parent_value: float, parent_depth: int, rng: np.random.Generator, **kwargs: Any) -> float:
+    def _default_generate_value(self, base_value: float, depth: int, rng: np.random.Generator, **kwargs: Any) -> float:
         ratio = kwargs['ratio']
-        variance = (1 - ratio) * ratio**(parent_depth + 1)
+        variance = (1 - ratio) * ratio**depth
         std = np.sqrt(variance)
-        return parent_value + rng.normal(0, std)
+        return base_value + rng.normal(0, std)
 
-    def _split_node(self, node: 'Node', idx_1: int, idx_2: int, level: int) -> Tuple['Node', 'Node']:
+    def _split_node(self, node: 'Node', rng: np.random.Generator, idx_1: int, idx_2: int) -> Tuple['Node', 'Node']:
         # Use the configured value generator, passing the node and the dataset's rng
-        val1 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.value_rng,
-                                    **self.value_generator_kwargs)
-        val2 = self.value_generator(parent_value=node.value, parent_depth=node.depth, rng=self.value_rng,
-                                    **self.value_generator_kwargs)
 
-        child1 = Node(idx_1, node.cluster_idx, parents=[node], value=val1,
-                      level=level, depth=node.depth + 1)
-        child2 = Node(idx_2, node.cluster_idx, parents=[node], value=val2,
-                      level=level, depth=node.depth + 1)
+        child1 = Node(idx_1, node.cluster_idx, parents=[node], depth=node.depth + 1)
+        child2 = Node(idx_2, node.cluster_idx, parents=[node], depth=node.depth + 1)
 
         # Clear neighbors of the current node as they are being redistributed
         neighbors = sorted(list(node.neighbors), key=lambda n: n.point_idx)
         node.neighbors.clear()
 
-        groups = self.graph_rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
+        groups = rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
         for n, group in zip(neighbors, groups):
             if group == 1:
                 n.neighbors.add(child1)
@@ -103,11 +97,10 @@ class PercolationDataset:
 
         # Update the current node to be a latent node
         node.node_type = 'latent'
-        node.value = 0.0
-        node.level = level
 
         return child1, child2
     
+
     def construct(self, size: int) -> Tuple[List['Node'], Dict[int, 'Node']]:
         """
         Constructs the dataset by iteratively splitting nodes.
@@ -121,25 +114,27 @@ class PercolationDataset:
         """
         if size < 1:
             raise ValueError(f"size must be at least 1, got {size}")
+        
+        rng = np.random.default_rng(seed=self.graph_seed) if self.graph_seed is not None else np.random.default_rng()
 
         point_idx = 0
         cluster_idx = 0
-        root = Node(point_idx, cluster_idx, value=self.value_generator(0, -1, self.value_rng, **self.value_generator_kwargs))
+        root = Node(point_idx, cluster_idx, level=0)
         points: List[Node] = [root]
         latents: Dict[int, Node] = {}
 
-        rvs = self.graph_rng.random(size=(size, 2))
+        rvs = rng.random(size=(size, 2))
         for i in range(1, size):
             if rvs[i, 0] < self.create_prob:
-                node = Node(point_idx + 1, cluster_idx + 1, level=i,
-                            value=self.value_generator(0, -1, self.value_rng, **self.value_generator_kwargs))
+                node = Node(point_idx + 1, cluster_idx + 1, level=i)
                 points.append(node)
                 point_idx += 1
                 cluster_idx += 1
             else:
                 split_idx = int(rvs[i, 1] * i)
                 split_node = points[split_idx]
-                child1, child2 = self._split_node(split_node, point_idx + 1, point_idx + 2, i)
+                child1, child2 = self._split_node(split_node, rng, point_idx + 1, point_idx + 2)
+                child1.level, child2.level = i, i
                 latents[split_node.point_idx] = split_node
 
                 # Swap-remove to update points in O(1)
@@ -153,17 +148,10 @@ class PercolationDataset:
         counts = Counter(p.cluster_idx for p in points)
         points.sort(key=lambda p: (-counts[p.cluster_idx], p.cluster_idx, p.point_idx))
 
-        # Compute irreducible error
-        ratio = self.value_generator_kwargs['ratio']
-        for point in points:
-            irreducible_variance = ratio**(point.depth + 1)
-            irreducible_std = np.sqrt(irreducible_variance)
-            irreducible_error = self.value_rng.normal(0, irreducible_std)
-            point.error = irreducible_error
-
         return points, latents
+    
 
-    def embed(self, points: List['Node'], latents: Dict[int, 'Node'], d: int) -> Tuple[np.ndarray, np.ndarray]:
+    def embed_features(self, points: List['Node'], latents: Dict[int, 'Node'], d: int) -> np.ndarray:
         """
         Embeds the points into a vector space using a tree random walk.
 
@@ -173,18 +161,20 @@ class PercolationDataset:
 
         Returns:
             X: Embeddings matrix.
-            y: Labels vector.
         """
         if d < 1:
              raise ValueError(f"Embedding dimension d must be at least 1, got {d}")
 
         if not points:
-            return np.empty((0, d)), np.array([])
+            return np.empty((0, d))
+        
+        # Set up RNG
+        rng = np.random.default_rng(seed=self.embed_seed) if self.embed_seed is not None else np.random.default_rng()
         
         # Compute base embedding direction for each cluster
         cluster_vectors = {}
         for cluster_idx in np.unique([point.cluster_idx for point in points]):
-            vec = self.embed_rng.normal(size=d)
+            vec = rng.normal(size=d)
             cluster_vectors[cluster_idx] = vec / np.linalg.norm(vec)
 
         # Assign directions using latents to embed points self-consistently with scale
@@ -192,7 +182,7 @@ class PercolationDataset:
         for point_idx, latent in latents.items():
             if point_idx not in point_vectors:
                 point_vectors[point_idx] = cluster_vectors[latent.cluster_idx]
-            u = self.embed_rng.normal(size=d)
+            u = rng.normal(size=d)
             w = u - (u @ point_vectors[point_idx])*point_vectors[point_idx] # project to orthogonal complement
             w /= np.linalg.norm(w)
             child_vectors = [np.sqrt(0.5)*(point_vectors[point_idx] + w), np.sqrt(0.5)*(point_vectors[point_idx] - w)]
@@ -215,13 +205,13 @@ class PercolationDataset:
                 point_vectors[points[start_idx].point_idx] = cluster_vectors[points[start_idx].cluster_idx]
 
             # Randomly choose root in [start_idx, end_idx)
-            root_idx = self.graph_rng.choice(end_idx - start_idx) + start_idx
+            root_idx = rng.choice(end_idx - start_idx) + start_idx
             root = points[root_idx].point_idx
 
             # DFS using stack
             stack = [root]
             visited = {root}
-            embeddings[root] = self.embed_rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
+            embeddings[root] = rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
 
             while stack:
                 parent = stack.pop()
@@ -233,16 +223,49 @@ class PercolationDataset:
             
             start_idx = end_idx
 
-        X = np.stack([embeddings[point.point_idx] for point in points])
-        y = np.array([point.value + point.error for point in points])
-        return X, y
+        return np.stack([embeddings[point.point_idx] for point in points])
+
+
+    def embed_labels(self, points: List['Node'], latents: Dict[int, 'Node']) -> np.ndarray:
+        """Generates labels for the points."""
+        rng = np.random.default_rng(seed=self.value_seed) if self.value_seed is not None else np.random.default_rng()
+
+        # Compute base value for each cluster
+        cluster_values = {}
+        for cluster_idx in np.unique([point.cluster_idx for point in points]):
+            base_value = self.value_generator(base_value=0.0, depth=0, rng=rng,
+                                              **self.value_generator_kwargs)
+            cluster_values[cluster_idx] = base_value
+
+        # Compute values hierarchically using the latents
+        for latent in latents.values():
+            if not latent.parents:
+                latent.value = cluster_values[latent.cluster_idx]
+            for child in sorted(latent.children, key=lambda c: c.point_idx):
+                child.value = self.value_generator(base_value=latent.value, depth=latent.depth + 1, rng=rng,
+                                                  **self.value_generator_kwargs)
+        for point in points:
+            if not point.parents:
+                point.value = cluster_values[point.cluster_idx]
+
+        # Compute irreducible error
+        ratio = self.value_generator_kwargs['ratio']
+        for point in points:
+            irreducible_variance = ratio**(point.depth + 1)
+            irreducible_std = np.sqrt(irreducible_variance)
+            irreducible_error = rng.normal(0, irreducible_std)
+            point.error = irreducible_error
+
+        return np.array([point.value + point.error for point in points])
 
 
     def construct_embed(self, size: int, d: int) -> Tuple[List['Node'], Dict[int, 'Node'], np.ndarray, np.ndarray]:
         """Convenience method to construct the dataset and generate embeddings."""
         points, latents = self.construct(size)
-        embeddings, labels = self.embed(points, latents, d)
-        return points, latents, embeddings, labels
+        X = self.embed_features(points, latents, d)
+        y = self.embed_labels(points, latents)
+        return points, latents, X, y
+
 
 class GroundTruthFeatures:
     """Generates ground truth features from generated percolation data."""
