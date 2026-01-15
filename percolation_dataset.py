@@ -232,7 +232,10 @@ class PercolationDataset:
         cluster_counts = Counter(cluster_inds)
         n_clusters = len(cluster_counts)
 
-        cluster_seq = np.random.SeedSequence(self.value_seed) if self.value_seed is not None else np.random.SeedSequence()
+        seed_seq = np.random.SeedSequence(self.value_seed) if self.value_seed is not None else np.random.SeedSequence()
+        cluster_seed, error_seed = (s.entropy for s in seed_seq.spawn(2))
+
+        cluster_seq = np.random.SeedSequence(cluster_seed)
         rngs = [np.random.default_rng(s) for s in cluster_seq.spawn(n_clusters)]
 
         # Compute base value for each cluster
@@ -261,8 +264,7 @@ class PercolationDataset:
         for point in points:
             irreducible_variance = ratio**(point.depth + 1)
             irreducible_std = np.sqrt(irreducible_variance)
-            ss = np.random.SeedSequence(entropy=self.value_seed + 1 if self.value_seed is not None else None,
-                                        spawn_key=(point.point_idx,))
+            ss = np.random.SeedSequence(entropy=error_seed, spawn_key=(point.point_idx,))
             rng = np.random.default_rng(ss)
             point.error = rng.normal(0, irreducible_std)
 
