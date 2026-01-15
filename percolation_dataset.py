@@ -228,33 +228,43 @@ class PercolationDataset:
 
     def embed_labels(self, points: List['Node'], latents: Dict[int, 'Node']) -> np.ndarray:
         """Generates labels for the points."""
-        rng = np.random.default_rng(seed=self.value_seed) if self.value_seed is not None else np.random.default_rng()
+        cluster_inds = [point.cluster_idx for point in points]
+        cluster_counts = Counter(cluster_inds)
+        n_clusters = len(cluster_counts)
+
+        cluster_seq = np.random.SeedSequence(self.value_seed) if self.value_seed is not None else np.random.SeedSequence()
+        rngs = [np.random.default_rng(s) for s in cluster_seq.spawn(n_clusters)]
 
         # Compute base value for each cluster
-        cluster_values = {}
-        for cluster_idx in np.unique([point.cluster_idx for point in points]):
-            base_value = self.value_generator(base_value=0.0, depth=0, rng=rng,
+        cluster_values = np.zeros(n_clusters)
+        for cluster_idx in range(n_clusters):
+            base_value = self.value_generator(base_value=0.0, depth=0, rng=rngs[cluster_idx],
                                               **self.value_generator_kwargs)
             cluster_values[cluster_idx] = base_value
+
+        # Assign values for single points with no latents
+        for point in points:
+            if not point.parents:
+                point.value = cluster_values[point.cluster_idx]
 
         # Compute values hierarchically using the latents
         for latent in latents.values():
             if not latent.parents:
                 latent.value = cluster_values[latent.cluster_idx]
             for child in sorted(latent.children, key=lambda c: c.point_idx):
-                child.value = self.value_generator(base_value=latent.value, depth=latent.depth + 1, rng=rng,
+                child.value = self.value_generator(base_value=latent.value, depth=latent.depth + 1,
+                                                   rng=rngs[latent.cluster_idx],
                                                   **self.value_generator_kwargs)
-        for point in points:
-            if not point.parents:
-                point.value = cluster_values[point.cluster_idx]
 
-        # Compute irreducible error
+        # Compute irreducible error for each point
         ratio = self.value_generator_kwargs['ratio']
         for point in points:
             irreducible_variance = ratio**(point.depth + 1)
             irreducible_std = np.sqrt(irreducible_variance)
-            irreducible_error = rng.normal(0, irreducible_std)
-            point.error = irreducible_error
+            ss = np.random.SeedSequence(entropy=self.value_seed + 1 if self.value_seed is not None else None,
+                                        spawn_key=(point.point_idx,))
+            rng = np.random.default_rng(ss)
+            point.error = rng.normal(0, irreducible_std)
 
         return np.array([point.value + point.error for point in points])
 
