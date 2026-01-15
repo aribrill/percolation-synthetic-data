@@ -125,6 +125,13 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Compare labels
         self.assertTrue(np.array_equal(y1, y2), "Labels are not reproducible with the same RNG seed")
 
+    def test_contiguous_cluster_indices(self):
+        """Test that cluster indices are contiguous and start from 0."""
+        points, _latents = self.dataset.construct(size=1000)
+        cluster_indices = sorted(set(p.cluster_idx for p in points))
+        expected_indices = list(range(len(cluster_indices)))
+        self.assertEqual(cluster_indices, expected_indices,
+                         "Cluster indices are not contiguous and starting from 0")
 
     def test_neighbor_graph_is_tree(self):
         """Test that the graph formed by neighboring points is a tree."""
