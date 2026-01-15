@@ -115,7 +115,11 @@ class PercolationDataset:
         if size < 1:
             raise ValueError(f"size must be at least 1, got {size}")
         
-        rng = np.random.default_rng(seed=self.graph_seed) if self.graph_seed is not None else np.random.default_rng()
+        # Set up RNG
+        ss = np.random.SeedSequence(self.graph_seed) if self.graph_seed is not None else np.random.SeedSequence()
+        rvs_seed, split_seed = (s.entropy for s in ss.spawn(2))
+        rvs_rng = np.random.default_rng(seed=rvs_seed)
+        split_rng = np.random.default_rng(seed=split_seed)
 
         point_idx = 0
         cluster_idx = 0
@@ -123,7 +127,7 @@ class PercolationDataset:
         points: List[Node] = [root]
         latents: Dict[int, Node] = {}
 
-        rvs = rng.random(size=(size, 2))
+        rvs = rvs_rng.random(size=(size, 2))
         for i in range(1, size):
             if rvs[i, 0] < self.create_prob:
                 node = Node(point_idx + 1, cluster_idx + 1, level=i)
@@ -133,7 +137,7 @@ class PercolationDataset:
             else:
                 split_idx = int(rvs[i, 1] * i)
                 split_node = points[split_idx]
-                child1, child2 = self._split_node(split_node, rng, point_idx + 1, point_idx + 2)
+                child1, child2 = self._split_node(split_node, split_rng, point_idx + 1, point_idx + 2)
                 child1.level, child2.level = i, i
                 latents[split_node.point_idx] = split_node
 
