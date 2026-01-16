@@ -96,7 +96,34 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             if p.level > 0:
                 self.assertEqual(p.value, 100.0)
 
-    def test_rng_reproducibility(self):
+    def test_rng_reproducibility_for_same_dataset(self):
+        """Test that multiple calls to construct_embed produce identical datasets."""
+        ds = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        points1, latents1, X1, y1 = ds.construct_embed(size=100, d=10)
+        points2, latents2, X2, y2 = ds.construct_embed(size=100, d=10)
+
+        # Compare points
+        for p1, p2 in zip(points1, points2):
+            self.assertEqual(p1.point_idx, p2.point_idx)
+            self.assertEqual(p1.cluster_idx, p2.cluster_idx)
+            self.assertEqual(p1.value, p2.value)
+            self.assertEqual(p1.level, p2.level)
+
+        # Compare latents
+        self.assertEqual(len(latents1), len(latents2))
+        for idx in latents1:
+            node1 = latents1[idx]
+            node2 = latents2[idx]
+            self.assertEqual(node1.value, node2.value)
+            self.assertEqual(node1.level, node2.level)
+
+        # Compare embeddings
+        self.assertTrue(np.array_equal(X1, X2), "Embeddings are not reproducible with the same RNG seed")
+
+        # Compare labels
+        self.assertTrue(np.array_equal(y1, y2), "Labels are not reproducible with the same RNG seed")
+
+    def test_rng_reproducibility_for_different_datasets(self):
         """Test that using the same RNG seed produces identical datasets."""
         ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
         points1, latents1, X1, y1 = ds1.construct_embed(size=100, d=10)
@@ -154,11 +181,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_datasets_consistent_across_sizes(self):
         """Test that datasets generated with different sizes are consistent for overlapping points."""
-        ds_small = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
-        points_small, latents_small, X_small, y_small = ds_small.construct_embed(size=50, d=10)
-
-        ds_large = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
-        points_large, latents_large, X_large, y_large = ds_large.construct_embed(size=100, d=10)
+        ds = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
+        points_small, latents_small, X_small, y_small = ds.construct_embed(size=50, d=10)
+        points_large, latents_large, X_large, y_large = ds.construct_embed(size=100, d=10)
 
         # Create mapping from point_idx to index in large dataset
         point_idx_to_large_idx = {p.point_idx: i for i, p in enumerate(points_large)}
