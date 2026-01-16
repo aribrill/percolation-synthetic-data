@@ -285,6 +285,18 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Check if the structure is a branching (a forest of trees directed away from a root)
         self.assertTrue(nx.is_branching(G), "Hierarchy is not a branching (directed forest)")
 
+    def test_embedding_single_cluster(self):
+        """Test that embedding a single cluster works correctly."""
+        points, latents, X, y = PercolationDataset(graph_seed=0, embed_seed=1, create_prob=0).construct_embed(size=50, d=10)
+        # Check for NaNs and Infs in embeddings
+        self.assertFalse(np.isnan(X).any(), "Embeddings contain NaN values")
+        self.assertFalse(np.isinf(X).any(), "Embeddings contain Inf values")
+
+        # Check for NaNs and Infs in labels
+        self.assertFalse(np.isnan(y).any(), "Labels contain NaN values")
+        self.assertFalse(np.isinf(y).any(), "Labels contain Inf values")
+
+
     def test_ground_truth_features_n_features(self):
         """Test that setting n_features has correct effect."""
         size = 1000
