@@ -117,7 +117,7 @@ class PercolationDataset:
         
         # Set up RNG
         ss = np.random.SeedSequence(self.graph_seed) if self.graph_seed is not None else np.random.SeedSequence()
-        rvs_seed, split_seed = (s.entropy for s in ss.spawn(2))
+        rvs_seed, split_seed = ss.spawn(2)
         rvs_rng = np.random.default_rng(seed=rvs_seed)
         split_rng = np.random.default_rng(seed=split_seed)
 
@@ -174,7 +174,7 @@ class PercolationDataset:
         
         # Set up RNG
         seed_seq = np.random.SeedSequence(self.embed_seed) if self.embed_seed is not None else np.random.SeedSequence()
-        cluster_vec_seed, cluster_uniform_seed, cluster_root_seed, latent_dir_seed = (s.entropy for s in seed_seq.spawn(4))
+        cluster_vec_seed, cluster_uniform_seed, cluster_root_seed, latent_dir_seed = seed_seq.spawn(4)
 
         # Compute base embedding direction for each cluster
         cluster_vec_rng = np.random.default_rng(seed=cluster_vec_seed)
@@ -219,7 +219,8 @@ class PercolationDataset:
                 root = points[start_idx].point_idx
             else:
                 # Randomly choose root following the latent hierarchy for consistency across dataset sizes
-                ss = np.random.SeedSequence(entropy=cluster_root_seed, spawn_key=(points[start_idx].cluster_idx,))
+                ss = np.random.SeedSequence(entropy=cluster_root_seed.entropy,
+                                            spawn_key=cluster_root_seed.spawn_key + (points[start_idx].cluster_idx,))
                 cluster_root_rng = np.random.default_rng(ss)
                 latent_idx = cluster_latents[points[start_idx].cluster_idx]
                 while latent_idx in latents:
@@ -230,7 +231,8 @@ class PercolationDataset:
             # DFS using stack
             stack = [root]
             visited = {root}
-            ss = np.random.SeedSequence(entropy=cluster_uniform_seed, spawn_key=(points[start_idx].cluster_idx,))
+            ss = np.random.SeedSequence(entropy=cluster_uniform_seed.entropy,
+                                        spawn_key=cluster_uniform_seed.spawn_key + (points[start_idx].cluster_idx,))
             cluster_uniform_rng = np.random.default_rng(ss)
             embeddings[root] = cluster_uniform_rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
 
@@ -254,10 +256,9 @@ class PercolationDataset:
         n_clusters = len(cluster_counts)
 
         seed_seq = np.random.SeedSequence(self.value_seed) if self.value_seed is not None else np.random.SeedSequence()
-        cluster_seed, error_seed = (s.entropy for s in seed_seq.spawn(2))
+        cluster_seed, error_seed = seed_seq.spawn(2)
 
-        cluster_seq = np.random.SeedSequence(cluster_seed)
-        rngs = [np.random.default_rng(s) for s in cluster_seq.spawn(n_clusters)]
+        rngs = [np.random.default_rng(s) for s in cluster_seed.spawn(n_clusters)]
 
         # Compute base value for each cluster
         cluster_values = np.zeros(n_clusters)
@@ -285,7 +286,8 @@ class PercolationDataset:
         for point in points:
             irreducible_variance = ratio**(point.depth + 1)
             irreducible_std = np.sqrt(irreducible_variance)
-            ss = np.random.SeedSequence(entropy=error_seed, spawn_key=(point.point_idx,))
+            ss = np.random.SeedSequence(entropy=error_seed.entropy,
+                            spawn_key=error_seed.spawn_key + (point.point_idx,))
             rng = np.random.default_rng(ss)
             point.error = rng.normal(0, irreducible_std)
 
