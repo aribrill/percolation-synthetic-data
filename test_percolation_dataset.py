@@ -125,6 +125,61 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Compare labels
         self.assertTrue(np.array_equal(y1, y2), "Labels are not reproducible with the same RNG seed")
 
+    def test_different_seeds_produce_different_datasets(self):
+        """Test that different RNG seeds produce different datasets."""
+        size = 100
+        d = 10
+
+        ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        _points1, _latents1, X1, y1 = ds1.construct_embed(size=size, d=d)
+
+        ds2 = PercolationDataset(graph_seed=11, embed_seed=20, value_seed=30)
+        _points2, _latents2, X2, y2 = ds2.construct_embed(size=size, d=d)
+
+        ds3 = PercolationDataset(graph_seed=10, embed_seed=21, value_seed=30)
+        _points3, _latents3, X3, y3 = ds3.construct_embed(size=size, d=d)
+
+        ds4 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=31)
+        _points4, _latents4, X4, y4 = ds4.construct_embed(size=size, d=d)
+
+        # Compare embeddings
+        self.assertFalse(np.array_equal(X1, X2), "Embeddings are identical with only different graph seeds")
+        self.assertFalse(np.array_equal(X1, X3), "Embeddings are identical with only different embed seeds")
+        self.assertTrue(np.array_equal(X1, X4), "Embeddings are not identical with only different value seeds")
+
+        # Compare labels
+        self.assertFalse(np.array_equal(y1, y2), "Labels are identical with only different graph seeds")
+        self.assertTrue(np.array_equal(y1, y3), "Labels are not identical with only different embed seeds")
+        self.assertFalse(np.array_equal(y1, y4), "Labels are identical with only different value seeds")
+
+    def test_datasets_consistent_across_sizes(self):
+        """Test that datasets generated with different sizes are consistent for overlapping points."""
+        ds_small = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
+        points_small, latents_small, X_small, y_small = ds_small.construct_embed(size=50, d=10)
+
+        ds_large = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
+        points_large, latents_large, X_large, y_large = ds_large.construct_embed(size=100, d=10)
+
+        # Create mapping from point_idx to index in large dataset
+        point_idx_to_large_idx = {p.point_idx: i for i, p in enumerate(points_large)}
+
+        for i, p_small in enumerate(points_small):
+            idx_large = point_idx_to_large_idx[p_small.point_idx]
+            p_large = points_large[idx_large]
+
+            # Compare point properties
+            self.assertEqual(p_small.cluster_idx, p_large.cluster_idx)
+            self.assertEqual(p_small.value, p_large.value)
+            self.assertEqual(p_small.level, p_large.level)
+
+            # Compare embeddings
+            self.assertTrue(np.array_equal(X_small[i], X_large[idx_large]),
+                            f"Embeddings for point {p_small.point_idx} differ between sizes")
+
+            # Compare labels
+            self.assertEqual(y_small[i], y_large[idx_large],
+                             f"Labels for point {p_small.point_idx} differ between sizes")
+
     def test_contiguous_cluster_indices(self):
         """Test that cluster indices are contiguous and start from 0."""
         points, _latents = self.dataset.construct(size=1000)
