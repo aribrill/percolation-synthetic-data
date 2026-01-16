@@ -200,8 +200,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
                 # Compare point properties
                 self.assertEqual(p_small.cluster_idx, p_large.cluster_idx)
-                self.assertEqual(p_small.value, p_large.value)
                 self.assertEqual(p_small.level, p_large.level)
+                self.assertEqual(p_small.value, p_large.value)
+                self.assertEqual(p_small.error, p_large.error)
 
                 # Compare embeddings
                 self.assertTrue(np.array_equal(X_small[i], X_large[idx_large]),
