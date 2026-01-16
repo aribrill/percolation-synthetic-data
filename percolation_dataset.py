@@ -173,20 +173,23 @@ class PercolationDataset:
             return np.empty((0, d))
         
         # Set up RNG
-        rng = np.random.default_rng(seed=self.embed_seed) if self.embed_seed is not None else np.random.default_rng()
-        
+        seed_seq = np.random.SeedSequence(self.embed_seed) if self.embed_seed is not None else np.random.SeedSequence()
+        cluster_vec_seed, cluster_uniform_seed, cluster_root_seed, latent_dir_seed = (s.entropy for s in seed_seq.spawn(4))
+
         # Compute base embedding direction for each cluster
+        cluster_vec_rng = np.random.default_rng(seed=cluster_vec_seed)
         cluster_vectors = {}
         for cluster_idx in np.unique([point.cluster_idx for point in points]):
-            vec = rng.normal(size=d)
+            vec = cluster_vec_rng.normal(size=d)
             cluster_vectors[cluster_idx] = vec / np.linalg.norm(vec)
 
         # Assign directions using latents to embed points self-consistently with scale
         point_vectors = {}
+        latent_dir_rng = np.random.default_rng(seed=latent_dir_seed)
         for point_idx, latent in latents.items():
             if point_idx not in point_vectors:
                 point_vectors[point_idx] = cluster_vectors[latent.cluster_idx]
-            u = rng.normal(size=d)
+            u = latent_dir_rng.normal(size=d)
             w = u - (u @ point_vectors[point_idx])*point_vectors[point_idx] # project to orthogonal complement
             w /= np.linalg.norm(w)
             child_vectors = [np.sqrt(0.5)*(point_vectors[point_idx] + w), np.sqrt(0.5)*(point_vectors[point_idx] - w)]
@@ -199,23 +202,37 @@ class PercolationDataset:
         point_idx2idx = {point.point_idx: i for i, point in enumerate(points)}
         embeddings = {}
 
+        # Retrieve the top-level latent for each cluster
+        cluster_latents = {}
+        for point_idx, latent in latents.items():
+            if not latent.parents:
+                cluster_latents[latent.cluster_idx] = point_idx
+
         while start_idx < size:
             # Find boundaries of current cluster
             while end_idx < size and points[end_idx].cluster_idx == points[start_idx].cluster_idx:
                 end_idx += 1
 
-            # Retrieve vector now for a single-point cluster with no latents
+            # For a single-point cluster with no latents, assign its vector and root node directly
             if end_idx - start_idx == 1:
                 point_vectors[points[start_idx].point_idx] = cluster_vectors[points[start_idx].cluster_idx]
-
-            # Randomly choose root in [start_idx, end_idx)
-            root_idx = rng.choice(end_idx - start_idx) + start_idx
-            root = points[root_idx].point_idx
+                root = points[start_idx].point_idx
+            else:
+                # Randomly choose root following the latent hierarchy for consistency across dataset sizes
+                ss = np.random.SeedSequence(entropy=cluster_root_seed, spawn_key=(points[start_idx].cluster_idx,))
+                cluster_root_rng = np.random.default_rng(ss)
+                latent_idx = cluster_latents[points[start_idx].cluster_idx]
+                while latent_idx in latents:
+                    children = sorted(latents[latent_idx].children, key=lambda c: c.point_idx)
+                    latent_idx = cluster_root_rng.choice(children).point_idx
+                root = latent_idx
 
             # DFS using stack
             stack = [root]
             visited = {root}
-            embeddings[root] = rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
+            ss = np.random.SeedSequence(entropy=cluster_uniform_seed, spawn_key=(points[start_idx].cluster_idx,))
+            cluster_uniform_rng = np.random.default_rng(ss)
+            embeddings[root] = cluster_uniform_rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
 
             while stack:
                 parent = stack.pop()
