@@ -188,22 +188,47 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Create mapping from point_idx to index in large dataset
         point_idx_to_large_idx = {p.point_idx: i for i, p in enumerate(points_large)}
 
+        # Every point in small dataset should be either in large dataset's points or latents
         for i, p_small in enumerate(points_small):
-            idx_large = point_idx_to_large_idx[p_small.point_idx]
-            p_large = points_large[idx_large]
+            point_idx = p_small.point_idx
+            self.assertTrue((point_idx in point_idx_to_large_idx) ^ (point_idx in latents_large),
+                            f"Point {point_idx} not in exactly one of large dataset's points or latents")
+            
+            if point_idx in point_idx_to_large_idx:
+                idx_large = point_idx_to_large_idx[p_small.point_idx]
+                p_large = points_large[idx_large]
 
-            # Compare point properties
-            self.assertEqual(p_small.cluster_idx, p_large.cluster_idx)
-            self.assertEqual(p_small.value, p_large.value)
-            self.assertEqual(p_small.level, p_large.level)
+                # Compare point properties
+                self.assertEqual(p_small.cluster_idx, p_large.cluster_idx)
+                self.assertEqual(p_small.value, p_large.value)
+                self.assertEqual(p_small.level, p_large.level)
 
-            # Compare embeddings
-            self.assertTrue(np.array_equal(X_small[i], X_large[idx_large]),
-                            f"Embeddings for point {p_small.point_idx} differ between sizes")
+                # Compare embeddings
+                self.assertTrue(np.array_equal(X_small[i], X_large[idx_large]),
+                                f"Embeddings for point {p_small.point_idx} differ between sizes")
 
-            # Compare labels
-            self.assertEqual(y_small[i], y_large[idx_large],
-                             f"Labels for point {p_small.point_idx} differ between sizes")
+                # Compare labels
+                self.assertEqual(y_small[i], y_large[idx_large],
+                                f"Labels for point {p_small.point_idx} differ between sizes")
+            
+            if point_idx in latents_large:
+                l_large = latents_large[point_idx]
+
+                # Compare latent properties
+                self.assertEqual(p_small.cluster_idx, l_large.cluster_idx)
+                self.assertEqual(p_small.value, l_large.value)
+                self.assertEqual(p_small.level, l_large.level)
+
+        # Every latent in small dataset should be in large dataset's latents
+        for point_idx, latent in latents_small.items():
+            self.assertIn(point_idx, latents_large)
+            l_large = latents_large[point_idx]
+
+            # Compare latent properties
+            self.assertEqual(latent.cluster_idx, l_large.cluster_idx)
+            self.assertEqual(latent.value, l_large.value)
+            self.assertEqual(latent.level, l_large.level)
+
 
     def test_contiguous_cluster_indices(self):
         """Test that cluster indices are contiguous and start from 0."""
