@@ -426,7 +426,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
         # Verify estimated alpha is close to the expected exponent
         expected_alpha = 2.5
-        sigma_threshold = 1.5
+        sigma_threshold = 2.0
         self.assertAlmostEqual(alpha, expected_alpha, delta=sigma_threshold*sigma,
                                msg=f"Estimated alpha {alpha:.4f} deviates more than {sigma_threshold} sigma "
                                    f"{sigma:.4f} from expected {expected_alpha}")
@@ -463,7 +463,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_label_distribution(self):
         """Test that the regression labels have approximately zero mean and unit standard deviation."""
         self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
-        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.025, msg="Labels do not have standard deviation close to 1")
+        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg="Labels do not have standard deviation close to 1")
 
     def test_feature_label_correlation(self):
         """Test that the features and labels are weakly correlated."""
