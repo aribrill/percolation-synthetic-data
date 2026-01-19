@@ -365,6 +365,42 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         self.assertLess(mse_01, mse_05, "MSE with ratio=0.1 should be less than MSE with ratio=0.5")
         self.assertLess(mse_05, mse_09, "MSE with ratio=0.5 should be less than MSE with ratio=0.9")
 
+    def test_cluster_consistency_across_size(self):
+        """Test that clusters are consistent when generating datasets of different sizes."""
+        d = 100
+        size = 1000
+
+        dataset = PercolationDataset(graph_seed=20, embed_seed=21, value_seed=22, create_prob=0)
+        _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
+        nn = NearestNeighbors(n_neighbors=1).fit(X_large)
+
+        size_deltas = (1, 10, 100)
+        bounds = (1e-5, 1e-4, 1e-3) # Loose bounds, MSE can vary significantly with different seeds
+
+        for size_delta, bound in zip(size_deltas, bounds):
+            _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
+            _distances, indices = nn.kneighbors(X_small)
+            pred = y_large[indices].squeeze()
+            mse = np.mean((y_small - pred)**2)
+            self.assertLessEqual(mse, bound, f"Mean squared error {mse} not less than bound {bound}")
+
+    def test_distribution_consistency_across_size(self):
+        """Test that distributions are consistent when generating datasets of different sizes."""
+        d = 100
+        size = 3000
+        size_delta = size // 10
+        bound = 0.03 # Fairly tight bound, variance is small across seeds
+
+        dataset = PercolationDataset(graph_seed=20, embed_seed=21, value_seed=22)
+        _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
+        _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
+
+        nn = NearestNeighbors(n_neighbors=1).fit(X_large)
+        _distances, indices = nn.kneighbors(X_small)
+        pred = y_large[indices].squeeze()
+        mse = np.mean((y_small - pred)**2)
+        self.assertLessEqual(mse, bound, f"Mean squared error {mse} not less than bound {bound}")
+
 
 class TestPercolationDatasetProperties(unittest.TestCase):
     """Validate the properties of the generated dataset."""
