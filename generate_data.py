@@ -9,8 +9,7 @@ embedding_dimension = 128
 
 for seed in range(n_datasets):
     print(f"Generating dataset {seed}...")
-    rng = np.random.default_rng(seed=seed)
-    dataset = PercolationDataset(rng=rng)
+    dataset = PercolationDataset(graph_seed=seed, embed_seed=seed + 10000, value_seed=seed + 20000)
     points, latents, X, y = dataset.construct_embed(size=dataset_size, d=embedding_dimension)
     ground_truth_features = GroundTruthFeatures(points, latents)
     gt_features = ground_truth_features.get_features()

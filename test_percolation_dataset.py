@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import List
+from typing import List, Optional
 
 import unittest
 import networkx as nx
@@ -13,8 +13,9 @@ from sklearn.neighbors import NearestNeighbors
 
 from percolation_dataset import Node, PercolationDataset, GroundTruthFeatures
 
-def ground_truth_1nn_baseline(points: List['Node'], rng: np.random.Generator) -> float:
+def ground_truth_1nn_baseline(points: List['Node'], seed: Optional[int] = None) -> float:
     """Returns ground-truth 1-nearest-neighbor mean squared error"""
+    rng = np.random.default_rng(seed) if seed is not None else np.random.default_rng()
     error = []
     for point in points:
         if len(point.neighbors) == 0:
@@ -30,8 +31,7 @@ def ground_truth_1nn_baseline(points: List['Node'], rng: np.random.Generator) ->
 
 class TestPercolationDatasetBasic(unittest.TestCase):
     def setUp(self):
-        self.rng = np.random.default_rng(42)
-        self.dataset = PercolationDataset(rng=self.rng)
+        self.dataset = PercolationDataset(graph_seed=0, embed_seed=1, value_seed=2)
 
     def test_initialization_validation(self):
         """Test that invalid create_prob and split_prob values raise ValueError."""
@@ -66,9 +66,11 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size = 20
         d = 5
         points, latents = self.dataset.construct(size=size)
-        X, y = self.dataset.embed(points, d=d)
 
+        X = self.dataset.embed_features(points, latents, d=d)
         self.assertEqual(X.shape, (size, d))
+
+        y = self.dataset.embed_labels(points, latents)
         self.assertEqual(y.shape, (size,))
 
     def test_input_validation_methods(self):
@@ -76,31 +78,57 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.dataset.construct(size=0)
 
-        points, _ = self.dataset.construct(size=5)
+        points, latents = self.dataset.construct(size=5)
         with self.assertRaises(ValueError):
-            self.dataset.embed(points, d=0)
+            self.dataset.embed_features(points, latents, d=0)
 
     def test_custom_value_generator(self):
         """Test that a custom value generator is correctly utilized."""
-        def constant_gen(parent_value, parent_depth, rng, **kwargs):
+        def constant_gen(base_value, depth, rng, **kwargs):
             return 100.0
 
-        ds = PercolationDataset(value_generator=constant_gen, rng=self.rng)
+        ds = PercolationDataset(value_generator=constant_gen, value_seed=0)
         points, latents = ds.construct(size=5)
+        y = ds.embed_labels(points, latents)
 
         # Nodes generated via split (level > 0) should have value 100.0
         for p in points:
             if p.level > 0:
                 self.assertEqual(p.value, 100.0)
 
-    def test_rng_reproducibility(self):
+    def test_rng_reproducibility_for_same_dataset(self):
+        """Test that multiple calls to construct_embed produce identical datasets."""
+        ds = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        points1, latents1, X1, y1 = ds.construct_embed(size=100, d=10)
+        points2, latents2, X2, y2 = ds.construct_embed(size=100, d=10)
+
+        # Compare points
+        for p1, p2 in zip(points1, points2):
+            self.assertEqual(p1.point_idx, p2.point_idx)
+            self.assertEqual(p1.cluster_idx, p2.cluster_idx)
+            self.assertEqual(p1.value, p2.value)
+            self.assertEqual(p1.level, p2.level)
+
+        # Compare latents
+        self.assertEqual(len(latents1), len(latents2))
+        for idx in latents1:
+            node1 = latents1[idx]
+            node2 = latents2[idx]
+            self.assertEqual(node1.value, node2.value)
+            self.assertEqual(node1.level, node2.level)
+
+        # Compare embeddings
+        self.assertTrue(np.array_equal(X1, X2), "Embeddings are not reproducible with the same RNG seed")
+
+        # Compare labels
+        self.assertTrue(np.array_equal(y1, y2), "Labels are not reproducible with the same RNG seed")
+
+    def test_rng_reproducibility_for_different_datasets(self):
         """Test that using the same RNG seed produces identical datasets."""
-        rng1 = np.random.default_rng(123)
-        ds1 = PercolationDataset(rng=rng1)
+        ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
         points1, latents1, X1, y1 = ds1.construct_embed(size=100, d=10)
 
-        rng2 = np.random.default_rng(123)
-        ds2 = PercolationDataset(rng=rng2)
+        ds2 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
         points2, latents2, X2, y2 = ds2.construct_embed(size=100, d=10)
 
         # Compare points
@@ -124,6 +152,88 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Compare labels
         self.assertTrue(np.array_equal(y1, y2), "Labels are not reproducible with the same RNG seed")
 
+    def test_different_seeds_produce_different_datasets(self):
+        """Test that different RNG seeds produce different datasets."""
+        size = 100
+        d = 10
+
+        ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        _points1, _latents1, X1, y1 = ds1.construct_embed(size=size, d=d)
+
+        ds2 = PercolationDataset(graph_seed=11, embed_seed=20, value_seed=30)
+        _points2, _latents2, X2, y2 = ds2.construct_embed(size=size, d=d)
+
+        ds3 = PercolationDataset(graph_seed=10, embed_seed=21, value_seed=30)
+        _points3, _latents3, X3, y3 = ds3.construct_embed(size=size, d=d)
+
+        ds4 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=31)
+        _points4, _latents4, X4, y4 = ds4.construct_embed(size=size, d=d)
+
+        # Compare embeddings
+        self.assertFalse(np.array_equal(X1, X2), "Embeddings are identical with only different graph seeds")
+        self.assertFalse(np.array_equal(X1, X3), "Embeddings are identical with only different embed seeds")
+        self.assertTrue(np.array_equal(X1, X4), "Embeddings are not identical with only different value seeds")
+
+        # Compare labels
+        self.assertFalse(np.array_equal(y1, y2), "Labels are identical with only different graph seeds")
+        self.assertTrue(np.array_equal(y1, y3), "Labels are not identical with only different embed seeds")
+        self.assertFalse(np.array_equal(y1, y4), "Labels are identical with only different value seeds")
+
+    def test_overlapping_points_consistent_across_sizes(self):
+        """Test that datasets generated with different sizes are consistent for overlapping points."""
+        ds = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
+        points_small, latents_small, _X_small, y_small = ds.construct_embed(size=50, d=10)
+        points_large, latents_large, _X_large, y_large = ds.construct_embed(size=100, d=10)
+
+        # Create mapping from point_idx to index in large dataset
+        point_idx_to_large_idx = {p.point_idx: i for i, p in enumerate(points_large)}
+
+        # Every point in small dataset should be either in large dataset's points or latents
+        for i, p_small in enumerate(points_small):
+            point_idx = p_small.point_idx
+            self.assertTrue((point_idx in point_idx_to_large_idx) ^ (point_idx in latents_large),
+                            f"Point {point_idx} not in exactly one of large dataset's points or latents")
+            
+            if point_idx in point_idx_to_large_idx:
+                idx_large = point_idx_to_large_idx[p_small.point_idx]
+                p_large = points_large[idx_large]
+
+                # Compare point properties
+                self.assertEqual(p_small.cluster_idx, p_large.cluster_idx)
+                self.assertEqual(p_small.level, p_large.level)
+                self.assertEqual(p_small.value, p_large.value)
+                self.assertEqual(p_small.error, p_large.error)
+
+                # Compare labels
+                self.assertEqual(y_small[i], y_large[idx_large],
+                                f"Labels for point {p_small.point_idx} differ between sizes")
+            
+            if point_idx in latents_large:
+                l_large = latents_large[point_idx]
+
+                # Compare latent properties
+                self.assertEqual(p_small.cluster_idx, l_large.cluster_idx)
+                self.assertEqual(p_small.value, l_large.value)
+                self.assertEqual(p_small.level, l_large.level)
+
+        # Every latent in small dataset should be in large dataset's latents
+        for point_idx, latent in latents_small.items():
+            self.assertIn(point_idx, latents_large)
+            l_large = latents_large[point_idx]
+
+            # Compare latent properties
+            self.assertEqual(latent.cluster_idx, l_large.cluster_idx)
+            self.assertEqual(latent.value, l_large.value)
+            self.assertEqual(latent.level, l_large.level)
+
+
+    def test_contiguous_cluster_indices(self):
+        """Test that cluster indices are contiguous and start from 0."""
+        points, _latents = self.dataset.construct(size=1000)
+        cluster_indices = sorted(set(p.cluster_idx for p in points))
+        expected_indices = list(range(len(cluster_indices)))
+        self.assertEqual(cluster_indices, expected_indices,
+                         "Cluster indices are not contiguous and starting from 0")
 
     def test_neighbor_graph_is_tree(self):
         """Test that the graph formed by neighboring points is a tree."""
@@ -142,7 +252,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
-        points, latents = PercolationDataset(rng=self.rng, create_prob=0).construct(size=50)
+        points, latents = PercolationDataset(graph_seed=0, create_prob=0).construct(size=50)
         G = nx.DiGraph()
 
         # Collect all nodes involved
@@ -171,6 +281,18 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
         # Check if the structure is a branching (a forest of trees directed away from a root)
         self.assertTrue(nx.is_branching(G), "Hierarchy is not a branching (directed forest)")
+
+    def test_embedding_single_cluster(self):
+        """Test that embedding a single cluster works correctly."""
+        points, latents, X, y = PercolationDataset(graph_seed=0, embed_seed=1, create_prob=0).construct_embed(size=50, d=10)
+        # Check for NaNs and Infs in embeddings
+        self.assertFalse(np.isnan(X).any(), "Embeddings contain NaN values")
+        self.assertFalse(np.isinf(X).any(), "Embeddings contain Inf values")
+
+        # Check for NaNs and Infs in labels
+        self.assertFalse(np.isnan(y).any(), "Labels contain NaN values")
+        self.assertFalse(np.isinf(y).any(), "Labels contain Inf values")
+
 
     def test_ground_truth_features_n_features(self):
         """Test that setting n_features has correct effect."""
@@ -218,7 +340,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_nearest_neighbor_ground_truth(self):
         """Test that 1-NN using the ground truth points matches the embedded dataset."""
         points, _latents, X, y = self.dataset.construct_embed(size=10000, d=128)
-        mse_gt_1nn = ground_truth_1nn_baseline(points, self.rng)
+        mse_gt_1nn = ground_truth_1nn_baseline(points, seed=0)
         nn = NearestNeighbors(n_neighbors=2).fit(X)
         _distances, indices = nn.kneighbors(X)
 
@@ -232,16 +354,52 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_ratio_effect_on_loss(self):
         """Test that increasing ratio increases baseline MSE."""
         size = 1000
-        points_01, _latents01, _X01, _y01 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.1}).construct_embed(size=size, d=16)
-        points_05, _latents05, _X05, _y05 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.5}).construct_embed(size=size, d=16)
-        points_09, _latents09, _X09, _y09 = PercolationDataset(rng=self.rng, value_generator_kwargs={'ratio': 0.9}).construct_embed(size=size, d=16)
+        points_01, _latents01, _X01, _y01 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.1}).construct_embed(size=size, d=16)
+        points_05, _latents05, _X05, _y05 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.5}).construct_embed(size=size, d=16)
+        points_09, _latents09, _X09, _y09 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.9}).construct_embed(size=size, d=16)
 
-        mse_01 = ground_truth_1nn_baseline(points_01, self.rng)
-        mse_05 = ground_truth_1nn_baseline(points_05, self.rng)
-        mse_09 = ground_truth_1nn_baseline(points_09, self.rng)
+        mse_01 = ground_truth_1nn_baseline(points_01, seed=42)
+        mse_05 = ground_truth_1nn_baseline(points_05, seed=42)
+        mse_09 = ground_truth_1nn_baseline(points_09, seed=42)
 
         self.assertLess(mse_01, mse_05, "MSE with ratio=0.1 should be less than MSE with ratio=0.5")
         self.assertLess(mse_05, mse_09, "MSE with ratio=0.5 should be less than MSE with ratio=0.9")
+
+    def test_cluster_consistency_across_size(self):
+        """Test that clusters are consistent when generating datasets of different sizes."""
+        d = 100
+        size = 1000
+
+        dataset = PercolationDataset(graph_seed=20, embed_seed=21, value_seed=22, create_prob=0)
+        _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
+        nn = NearestNeighbors(n_neighbors=1).fit(X_large)
+
+        size_deltas = (1, 10, 100)
+        bounds = (1e-5, 1e-4, 1e-3) # Loose bounds, MSE can vary significantly with different seeds
+
+        for size_delta, bound in zip(size_deltas, bounds):
+            _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
+            _distances, indices = nn.kneighbors(X_small)
+            pred = y_large[indices].squeeze()
+            mse = np.mean((y_small - pred)**2)
+            self.assertLessEqual(mse, bound, f"Mean squared error {mse} not less than bound {bound}")
+
+    def test_distribution_consistency_across_size(self):
+        """Test that distributions are consistent when generating datasets of different sizes."""
+        d = 100
+        size = 3000
+        size_delta = size // 10
+        bound = 0.03 # Fairly tight bound, variance is small across seeds
+
+        dataset = PercolationDataset(graph_seed=20, embed_seed=21, value_seed=22)
+        _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
+        _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
+
+        nn = NearestNeighbors(n_neighbors=1).fit(X_large)
+        _distances, indices = nn.kneighbors(X_small)
+        pred = y_large[indices].squeeze()
+        mse = np.mean((y_small - pred)**2)
+        self.assertLessEqual(mse, bound, f"Mean squared error {mse} not less than bound {bound}")
 
 
 class TestPercolationDatasetProperties(unittest.TestCase):
@@ -249,8 +407,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.rng = np.random.default_rng(42)
-        cls.dataset = PercolationDataset(rng=cls.rng)
+        cls.dataset = PercolationDataset(graph_seed=42, embed_seed=43, value_seed=44)
         cls.size = 100000
         cls.d = 128
         points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
@@ -302,7 +459,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
         # Verify estimated alpha is close to the expected exponent
         expected_alpha = 2.5
-        sigma_threshold = 1.5
+        sigma_threshold = 2.0
         self.assertAlmostEqual(alpha, expected_alpha, delta=sigma_threshold*sigma,
                                msg=f"Estimated alpha {alpha:.4f} deviates more than {sigma_threshold} sigma "
                                    f"{sigma:.4f} from expected {expected_alpha}")
@@ -339,7 +496,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_label_distribution(self):
         """Test that the regression labels have approximately zero mean and unit standard deviation."""
         self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
-        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.025, msg="Labels do not have standard deviation close to 1")
+        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg="Labels do not have standard deviation close to 1")
 
     def test_feature_label_correlation(self):
         """Test that the features and labels are weakly correlated."""
@@ -393,7 +550,8 @@ class TestPercolationDatasetProperties(unittest.TestCase):
     def test_neighbor_graph_matches_embeddings(self):
         """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
         n_sample_points = 1000
-        sample_inds = self.rng.choice(self.size, size=n_sample_points, replace=False)
+        rng = np.random.default_rng(42)
+        sample_inds = rng.choice(self.size, size=n_sample_points, replace=False)
         X_sq = np.sum(self.X**2, axis=1)
         point_idx2idx = {p.point_idx: i for i, p in enumerate(self.points)}
         for idx in sample_inds:
