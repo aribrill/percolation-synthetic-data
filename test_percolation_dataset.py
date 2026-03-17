@@ -339,6 +339,23 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             self.assertEqual(set(non_zero_indices), set(expected_latent_indices),
                              f"Row {pidx} of ground truth feature matrix has incorrect non-zero entries")
             
+    def test_get_metadata(self):
+        """Test that get_metadata returns correct per-point metadata aligned with feature matrix rows."""
+        from collections import Counter
+        size = 1000
+        points, latents = self.dataset.construct(size=size)
+        gt_features = GroundTruthFeatures(points, latents)
+        metadata = gt_features.get_metadata()
+
+        self.assertEqual(metadata.shape, (size, 3), "Metadata has incorrect shape")
+        self.assertListEqual(list(metadata.columns), ['cluster_id', 'cluster_size', 'tree_depth'])
+
+        counts = Counter(p.cluster_idx for p in points)
+        for i, point in enumerate(points):
+            self.assertEqual(metadata.loc[i, 'cluster_id'], point.cluster_idx)
+            self.assertEqual(metadata.loc[i, 'cluster_size'], counts[point.cluster_idx])
+            self.assertEqual(metadata.loc[i, 'tree_depth'], len(gt_features.pidx2lidx[i]))
+
     def test_nearest_neighbor_ground_truth(self):
         """Test that 1-NN using the ground truth points matches the embedded dataset."""
         points, _latents, X, y = self.dataset.construct_embed(size=10000, d=128)

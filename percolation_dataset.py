@@ -4,6 +4,7 @@ from itertools import islice
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 from scipy import sparse
 
@@ -350,6 +351,28 @@ class GroundTruthFeatures:
         self.lidx2pidx = dict(sorted(self.lidx2pidx.items(), key=lambda item: item[0]))
         self.n_samples = len(self.points)
         self.n_latents = len(self.lidx2pidx)
+
+        counts = Counter(p.cluster_idx for p in self.points)
+        rows = []
+        for i, point in enumerate(self.points):
+            rows.append({
+                'cluster_id':   point.cluster_idx,
+                'cluster_size': counts[point.cluster_idx],
+                'tree_depth':   len(self.pidx2lidx[i]),
+            })
+        self._metadata = pd.DataFrame(rows)
+
+    def get_metadata(self) -> pd.DataFrame:
+        """
+        Returns a DataFrame of per-point metadata aligned with the feature matrix rows.
+
+        Returns:
+            DataFrame with columns:
+                - cluster_id: cluster index of the point
+                - cluster_size: number of points in the point's cluster
+                - tree_depth: number of latent ancestors of the point
+        """
+        return self._metadata
 
     def get_features(self, n_features: Optional[int] = None) -> sparse.csr_matrix:
         """
