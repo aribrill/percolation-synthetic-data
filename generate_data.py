@@ -3,8 +3,8 @@ from scipy import sparse
 
 from percolation_dataset import PercolationDataset, GroundTruthFeatures
 
-n_datasets = 10
-dataset_size = 100000
+n_datasets = 1
+dataset_size = 1000000
 embedding_dimension = 128
 
 for seed in range(n_datasets):
@@ -13,6 +13,7 @@ for seed in range(n_datasets):
     points, latents, X, y = dataset.construct_embed(size=dataset_size, d=embedding_dimension)
     ground_truth_features = GroundTruthFeatures(points, latents)
     gt_features = ground_truth_features.get_features()
+    gt_metadata = ground_truth_features.get_metadata()
     np.savez_compressed(
         f"percolation_dataset_size{dataset_size}_dim{embedding_dimension}_seed{seed}.npz",
         X=X,
@@ -21,4 +22,8 @@ for seed in range(n_datasets):
     sparse.save_npz(
         f"percolation_dataset_size{dataset_size}_dim{embedding_dimension}_seed{seed}_gt_features.npz",
         gt_features,
+    )
+    np.savez_compressed(
+        f"percolation_dataset_size{dataset_size}_dim{embedding_dimension}_seed{seed}_gt_metadata.npz",
+        **gt_metadata,
     )

@@ -328,8 +328,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
         assert X_gt.shape is not None
         self.assertEqual(X_gt.shape[0], size, "Ground truth feature matrix has incorrect number of rows")
-        self.assertEqual(X_gt.shape[1], gt_features.n_latents,
-                         "Ground truth feature matrix has incorrect number of columns")
+        self.assertEqual(X_gt.shape[1], gt_features.n_latents,"Ground truth feature matrix has incorrect number of columns")
 
         # Verify that each row has exactly one non-zero entry per latent node it is associated with
         for pidx in range(size):
@@ -347,14 +346,16 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         gt_features = GroundTruthFeatures(points, latents)
         metadata = gt_features.get_metadata()
 
-        self.assertEqual(metadata.shape, (size, 3), "Metadata has incorrect shape")
-        self.assertListEqual(list(metadata.columns), ['cluster_id', 'cluster_size', 'tree_depth'])
+        self.assertIsInstance(metadata, dict)
+        self.assertListEqual(list(metadata.keys()), ['cluster_id', 'cluster_size', 'tree_height'])
+        for values in metadata.values():
+            self.assertEqual(len(values), size)
 
         counts = Counter(p.cluster_idx for p in points)
         for i, point in enumerate(points):
-            self.assertEqual(metadata.loc[i, 'cluster_id'], point.cluster_idx)
-            self.assertEqual(metadata.loc[i, 'cluster_size'], counts[point.cluster_idx])
-            self.assertEqual(metadata.loc[i, 'tree_depth'], len(gt_features.pidx2lidx[i]))
+            self.assertEqual(metadata['cluster_id'][i], point.cluster_idx)
+            self.assertEqual(metadata['cluster_size'][i], counts[point.cluster_idx])
+            self.assertEqual(metadata['tree_height'][i], len(gt_features.pidx2lidx[i]))
 
     def test_nearest_neighbor_ground_truth(self):
         """Test that 1-NN using the ground truth points matches the embedded dataset."""

@@ -4,7 +4,6 @@ from itertools import islice
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 import numpy as np
-import pandas as pd
 from numpy.typing import NDArray
 from scipy import sparse
 
@@ -352,27 +351,24 @@ class GroundTruthFeatures:
         self.n_samples = len(self.points)
         self.n_latents = len(self.lidx2pidx)
 
-        counts = Counter(p.cluster_idx for p in self.points)
-        rows = []
-        for i, point in enumerate(self.points):
-            rows.append({
-                'cluster_id':   point.cluster_idx,
-                'cluster_size': counts[point.cluster_idx],
-                'tree_depth':   len(self.pidx2lidx[i]),
-            })
-        self._metadata = pd.DataFrame(rows)
 
-    def get_metadata(self) -> pd.DataFrame:
+    def get_metadata(self) -> dict:
         """
-        Returns a DataFrame of per-point metadata aligned with the feature matrix rows.
+        Returns a dict of per-point metadata aligned with the feature matrix rows.
 
         Returns:
-            DataFrame with columns:
-                - cluster_id: cluster index of the point
-                - cluster_size: number of points in the point's cluster
-                - tree_depth: number of latent ancestors of the point
+            dict with keys:
+                - cluster_id: cluster index of each point
+                - cluster_size: number of points in each point's cluster
+                - tree_height: number of latent ancestors of each point
         """
-        return self._metadata
+
+        counts = Counter(p.cluster_idx for p in self.points)
+        return {
+            'cluster_id':   [p.cluster_idx for p in self.points],
+            'cluster_size': [counts[p.cluster_idx] for p in self.points],
+            'tree_height':  [len(self.pidx2lidx[i]) for i, _ in enumerate(self.points)],
+        }
 
     def get_features(self, n_features: Optional[int] = None) -> sparse.csr_matrix:
         """
