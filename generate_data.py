@@ -4,12 +4,12 @@ from scipy import sparse
 from percolation_dataset import PercolationDataset, GroundTruthFeatures
 
 n_datasets = 1
-dataset_size = 1000000
-embedding_dimension = 128
+dataset_size = 200000
+embedding_dimension = 100
 
 for seed in range(n_datasets):
     print(f"Generating dataset {seed}...")
-    dataset = PercolationDataset(graph_seed=seed, embed_seed=seed + 10000, value_seed=seed + 20000)
+    dataset = PercolationDataset(graph_seed=seed, embed_seed=seed + 10000, value_seed=seed + 20000, create_prob=0.0)
     points, latents, X, y = dataset.construct_embed(size=dataset_size, d=embedding_dimension)
     ground_truth_features = GroundTruthFeatures(points, latents)
     gt_features = ground_truth_features.get_features()
