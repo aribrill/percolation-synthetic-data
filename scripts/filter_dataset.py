@@ -1,17 +1,26 @@
+import sys
 import numpy as np
 from pathlib import Path
 from scipy import sparse
+from typing import List, Optional
+
+sys.path.insert(0, str(Path("../").resolve()))
+from percolation_dataset import PercolationDataset, GroundTruthFeatures, Node
 
 # Set input paths
 data_folder_path = Path("../")
-data_path = data_folder_path / "percolation_dataset_size1000000_dim100_seed0.npz"
-feature_data_path = data_folder_path / "percolation_dataset_size1000000_dim100_seed0_gt_features.npz"
-meta_data_path = data_folder_path / "percolation_dataset_size1000000_dim100_seed0_gt_metadata.npz"
-base_name = data_path.stem  # "percolation_dataset_size1000000_dim100_seed0"
+data_path = data_folder_path / "percolation_dataset_size2000000_dim100_seed0.npz"
+feature_data_path = data_folder_path / "percolation_dataset_size2000000_dim100_seed0_gt_features.npz"
+meta_data_path = data_folder_path / "percolation_dataset_size2000000_dim100_seed0_gt_metadata.npz"
+base_name = data_path.stem
 
+# Dataset generation parameters (must match the original generation)
+dataset_size = 2000000
+embedding_dimension = 100
+seed = 0
 
-# Set filter parameters 
-min_size = 13600
+# Set filter parameters
+min_size = 250
 max_size = None
 
 # Load data
@@ -59,7 +68,11 @@ np.savez_compressed(
 )
 
 
+
+
 print(f"Filtered dataset saved to {data_folder_path}")
 print(f"Original size: {len(X)} points")
 print(f"Filtered size: {len(X_filtered)} points ({mask.sum() / len(X) * 100:.1f}% retained)")
+print(f"Number of clusters: {len(np.unique(metadata_filtered['cluster_id']))}")
+
 
