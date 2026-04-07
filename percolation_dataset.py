@@ -370,13 +370,15 @@ class GroundTruthFeatures:
             'tree_height':  [len(self.pidx2lidx[i]) for i, _ in enumerate(self.points)],
         }
 
-    def get_features(self, n_features: Optional[int] = None) -> sparse.csr_matrix:
+    def get_features(self, n_features: Optional[int] = None, use_values: bool = False) -> sparse.csr_matrix:
         """
         Returns sparse matrix of latent features for each data point.
 
         Args:
             n_features: Number of features to return, in generation order. If None, returns all features.
-        Returns:            
+            use_values: If True, store the actual z_u value for each latent instead of 1.
+                        Requires embed_labels() to have been called (i.e. use construct_embed(), not construct()).
+        Returns:
             features: Sparse matrix of shape (n_points, n_features).
         """
         if n_features is None:
@@ -388,7 +390,16 @@ class GroundTruthFeatures:
         col_ind = []
 
         for lidx, pidx in islice(self.lidx2pidx.items(), n_features):
-            data.extend(np.ones_like(pidx))
+            if use_values:
+                latent_node = self.latents[self.lidx2latent[lidx]]
+                if latent_node.parents:
+                    parent = list(latent_node.parents)[0]
+                    z_u = latent_node.value - parent.value
+                else:
+                    z_u = latent_node.value
+                data.extend([z_u] * len(pidx))
+            else:
+                data.extend(np.ones_like(pidx))
             row_ind.extend(pidx)
             col_ind.extend(np.full_like(pidx, lidx))
 

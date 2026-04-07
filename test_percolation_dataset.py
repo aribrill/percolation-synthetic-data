@@ -357,6 +357,45 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             self.assertEqual(metadata['cluster_size'][i], counts[point.cluster_idx])
             self.assertEqual(metadata['tree_height'][i], len(gt_features.pidx2lidx[i]))
 
+    def test_get_features_use_values(self):
+        """Test that get_features(use_values=True) stores correct z_u values."""
+        size = 100
+        points, latents, X, y = self.dataset.construct_embed(size=size, d=16)
+        gtf = GroundTruthFeatures(points, latents)
+
+        X_binary = gtf.get_features(use_values=False)
+        X_values = gtf.get_features(use_values=True)
+
+        # Sparsity pattern must be identical
+        self.assertEqual((X_binary != 0).nnz, (X_values != 0).nnz)
+
+        # Binary mode still returns 1s
+        self.assertTrue(np.all(X_binary.data == 1))
+
+        # Check z_u values are correct for each latent
+        for lidx in range(gtf.n_latents):
+            latent_node = gtf.latents[gtf.lidx2latent[lidx]]
+            if latent_node.parents:
+                parent = list(latent_node.parents)[0]
+                expected_z_u = latent_node.value - parent.value
+            else:
+                expected_z_u = latent_node.value
+            col = X_values.getcol(lidx)
+            nonzero_vals = col.data
+            if len(nonzero_vals) > 0:
+                np.testing.assert_allclose(nonzero_vals, expected_z_u,
+                    err_msg=f"Incorrect z_u value for latent {lidx}")
+
+        # Sum of z_u telescopes to the deepest ancestor latent's value
+        # (point.value also includes the leaf's own Gaussian draw, not stored in features)
+        for pidx, point in enumerate(points):
+            row = X_values.getrow(pidx)
+            ancestors = gtf.pidx2lidx[pidx]
+            if ancestors:
+                deepest_latent = gtf.latents[gtf.lidx2latent[ancestors[-1]]]
+                self.assertAlmostEqual(row.sum(), deepest_latent.value, places=10,
+                    msg=f"Sum of z_u for point {pidx} does not equal deepest ancestor latent value")
+
     def test_nearest_neighbor_ground_truth(self):
         """Test that 1-NN using the ground truth points matches the embedded dataset."""
         points, _latents, X, y = self.dataset.construct_embed(size=10000, d=128)

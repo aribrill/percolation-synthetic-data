@@ -12,7 +12,7 @@ for seed in range(n_datasets):
     dataset = PercolationDataset(graph_seed=seed, embed_seed=seed + 10000, value_seed=seed + 20000)
     points, latents, X, y = dataset.construct_embed(size=dataset_size, d=embedding_dimension)
     ground_truth_features = GroundTruthFeatures(points, latents)
-    gt_features = ground_truth_features.get_features()
+    gt_features = ground_truth_features.get_features(use_values=True)
     gt_metadata = ground_truth_features.get_metadata()
     np.savez_compressed(
         f"percolation_dataset_size{dataset_size}_dim{embedding_dimension}_seed{seed}.npz",
