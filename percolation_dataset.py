@@ -1,6 +1,7 @@
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from itertools import islice
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -31,44 +32,66 @@ class Node:
     def __repr__(self) -> str:
         return f"Node(point_idx={self.point_idx}, type={self.node_type}, value={self.value:.2f})"
 
+
+@dataclass(frozen=True)
+class Seeds:
+    """Seeds for reproducibility of different random processes in dataset generation.
+
+        graph_seed: Seed for the random number generator used in graph construction.
+        embed_seed: Seed for the random number generator used in embedding.
+        value_seed: Seed for the random number generator used in value generation.
+    """
+    graph: Optional[int] = None
+    embed: Optional[int] = None
+    value: Optional[int] = None
+
+
 class PercolationDataset:
     """Generates a percolation dataset."""
 
-    def __init__(self, create_prob: float = 0.3333333, split_prob: float = 0.2096414,
-                 graph_seed: Optional[int] = None,
-                 embed_seed: Optional[int] = None,
-                 value_seed: Optional[int] = None,
-                 value_generator: Optional[Callable[..., float]] = None,
-                 value_generator_kwargs: Optional[Dict[str, Any]] = None):
-        """
-        Args:
-            create_prob: Probability of creating a new cluster. Default is 1/3.
-            split_prob: Probability of a neighbor connecting to the first child. Default is 0.2096414.
-            graph_seed: Seed for the random number generator used in graph construction.
-            embed_seed: Seed for the random number generator used in embedding.
-            value_seed: Seed for the random number generator used in value generation.
-            value_generator: Function to generate values for new nodes.
-                             Signature: (*args, **kwargs) -> float.
-            value_generator_kwargs: Additional keyword arguments for value_generator. Default is {'ratio': 0.5}.
-        """
-        if not (0 <= create_prob <= 1):
-            raise ValueError(f"create_prob must be between 0 and 1, got {create_prob}")
-        if not (0 <= split_prob <= 1):
-            raise ValueError(f"split_prob must be between 0 and 1, got {split_prob}")
-
-        self.create_prob = create_prob
-        self.split_prob = split_prob
-        self.graph_seed = graph_seed
-        self.embed_seed = embed_seed
-        self.value_seed = value_seed
-        self.value_generator = value_generator if value_generator is not None else self._default_generate_value
-        self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.5}
-
-    def _default_generate_value(self, base_value: float, depth: int, rng: np.random.Generator, **kwargs: Any) -> float:
+    @staticmethod
+    def _default_generate_value(base_value: float, depth: int, rng: np.random.Generator, **kwargs: Any) -> float:
         ratio = kwargs['ratio']
         variance = (1 - ratio) * ratio**depth
         std = np.sqrt(variance)
         return base_value + rng.normal(0, std)
+    
+
+    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, split_prob: float = 0.2096414, value_generator: Optional[Callable[..., float]] = None, value_generator_kwargs: Optional[Dict[str, Any]] = None, seeds: Optional[Seeds] = None):
+        """Initializes the dataset generator.
+        Args:
+            mode: The mode of dataset generation, either "one_cluster", "distribution", or "custom". Determines create_prob.
+            create_prob: Probability of creating a new cluster instead of splitting an existing one (only used in "custom" mode).
+            split_prob: Probability of splitting neighbors when splitting a node (only used in "custom" mode).
+            value_generator: Function to generate values for child nodes based on parent value and depth (only used in "custom" mode).
+            value_generator_kwargs: Additional keyword arguments to pass to the value generator function (only used in "custom" mode).
+            seeds: Seeds for reproducibility of different random processes.
+        """
+        
+        self.mode = mode
+        self.split_prob = split_prob
+        self.value_generator = value_generator if value_generator is not None else self._default_generate_value
+        self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.5}
+        self.seeds = seeds if seeds is not None else Seeds()
+
+        if self.mode not in ("one_cluster", "distribution", "custom"):
+            raise ValueError(f"Invalid mode: {self.mode}")
+        if self.mode == "custom" and create_prob is None:
+            raise ValueError("create_prob must be specified in custom mode")
+        if self.mode != "custom" and create_prob is not None:
+            raise ValueError("create_prob should not be specified in non-custom mode")
+        if self.mode == "one_cluster":
+            self.create_prob = 0.0
+        elif self.mode == "distribution":
+            self.create_prob = 1/3
+        elif self.mode == "custom":
+            self.create_prob = create_prob
+
+        if not (0 <= self.create_prob <= 1): # type: ignore
+            raise ValueError(f"create_prob must be between 0 and 1, got {self.create_prob}")
+        if not (0 <= self.split_prob <= 1):
+            raise ValueError(f"split_prob must be between 0 and 1, got {self.split_prob}")
+
 
     def _split_node(self, node: 'Node', rng: np.random.Generator, idx_1: int, idx_2: int) -> Tuple['Node', 'Node']:
         # Use the configured value generator, passing the node and the dataset's rng
@@ -116,7 +139,7 @@ class PercolationDataset:
             raise ValueError(f"size must be at least 1, got {size}")
         
         # Set up RNG
-        ss = np.random.SeedSequence(self.graph_seed) if self.graph_seed is not None else np.random.SeedSequence()
+        ss = np.random.SeedSequence(self.seeds.graph) if self.seeds.graph is not None else np.random.SeedSequence()
         rvs_seed, split_seed = ss.spawn(2)
         rvs_rng = np.random.default_rng(seed=rvs_seed)
         split_rng = np.random.default_rng(seed=split_seed)
@@ -173,7 +196,7 @@ class PercolationDataset:
             return np.empty((0, d))
         
         # Set up RNG
-        seed_seq = np.random.SeedSequence(self.embed_seed) if self.embed_seed is not None else np.random.SeedSequence()
+        seed_seq = np.random.SeedSequence(self.seeds.embed) if self.seeds.embed is not None else np.random.SeedSequence()
         cluster_vec_seed, cluster_uniform_seed, cluster_root_seed, latent_dir_seed = seed_seq.spawn(4)
 
         # Compute base embedding direction for each cluster
@@ -255,7 +278,7 @@ class PercolationDataset:
         cluster_counts = Counter(cluster_inds)
         n_clusters = len(cluster_counts)
 
-        seed_seq = np.random.SeedSequence(self.value_seed) if self.value_seed is not None else np.random.SeedSequence()
+        seed_seq = np.random.SeedSequence(self.seeds.value) if self.seeds.value is not None else np.random.SeedSequence()
         cluster_seed, error_seed = seed_seq.spawn(2)
 
         rngs = [np.random.default_rng(s) for s in cluster_seed.spawn(n_clusters)]

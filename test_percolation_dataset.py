@@ -11,7 +11,7 @@ from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import Ridge
 from sklearn.neighbors import NearestNeighbors
 
-from percolation_dataset import Node, PercolationDataset, GroundTruthFeatures
+from percolation_dataset import Node, Seeds, PercolationDataset, GroundTruthFeatures
 
 def ground_truth_1nn_baseline(points: List['Node'], seed: Optional[int] = None) -> float:
     """Returns ground-truth 1-nearest-neighbor mean squared error"""
@@ -31,18 +31,18 @@ def ground_truth_1nn_baseline(points: List['Node'], seed: Optional[int] = None) 
 
 class TestPercolationDatasetBasic(unittest.TestCase):
     def setUp(self):
-        self.dataset = PercolationDataset(graph_seed=0, embed_seed=1, value_seed=2)
+        self.dataset = PercolationDataset("distribution", seeds=Seeds(graph=0, embed=1, value=2))
 
     def test_initialization_validation(self):
         """Test that invalid create_prob and split_prob values raise ValueError."""
         with self.assertRaises(ValueError):
-            PercolationDataset(create_prob=-0.1)
+            PercolationDataset("custom", create_prob=-0.1)
         with self.assertRaises(ValueError):
-            PercolationDataset(create_prob=1.1)
+            PercolationDataset("custom", create_prob=1.1)
         with self.assertRaises(ValueError):
-            PercolationDataset(split_prob=-0.1)
+            PercolationDataset("distribution", split_prob=-0.1)
         with self.assertRaises(ValueError):
-            PercolationDataset(split_prob=1.1)
+            PercolationDataset("distribution", split_prob=1.1)
 
     def test_construct_structure(self):
         """Test that construct generates the correct number of points and latents."""
@@ -87,7 +87,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         def constant_gen(base_value, depth, rng, **kwargs):
             return 100.0
 
-        ds = PercolationDataset(value_generator=constant_gen, value_seed=0)
+        ds = PercolationDataset("distribution", value_generator=constant_gen, value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(value=0))
         points, latents = ds.construct(size=5)
         y = ds.embed_labels(points, latents)
 
@@ -98,7 +98,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_rng_reproducibility_for_same_dataset(self):
         """Test that multiple calls to construct_embed produce identical datasets."""
-        ds = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        ds = PercolationDataset("distribution", seeds=Seeds(graph=10, embed=20, value=30))
         points1, latents1, X1, y1 = ds.construct_embed(size=100, d=10)
         points2, latents2, X2, y2 = ds.construct_embed(size=100, d=10)
 
@@ -125,10 +125,12 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_rng_reproducibility_for_different_datasets(self):
         """Test that using the same RNG seed produces identical datasets."""
-        ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        seeds = Seeds(graph=10, embed=20, value=30)
+
+        ds1 = PercolationDataset("distribution", seeds=seeds)
         points1, latents1, X1, y1 = ds1.construct_embed(size=100, d=10)
 
-        ds2 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        ds2 = PercolationDataset("distribution", seeds=seeds)
         points2, latents2, X2, y2 = ds2.construct_embed(size=100, d=10)
 
         # Compare points
@@ -157,16 +159,16 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size = 100
         d = 10
 
-        ds1 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=30)
+        ds1 = PercolationDataset("distribution", seeds=Seeds(graph=10, embed=20, value=30))
         _points1, _latents1, X1, y1 = ds1.construct_embed(size=size, d=d)
 
-        ds2 = PercolationDataset(graph_seed=11, embed_seed=20, value_seed=30)
+        ds2 = PercolationDataset("distribution", seeds=Seeds(graph=11, embed=20, value=30))
         _points2, _latents2, X2, y2 = ds2.construct_embed(size=size, d=d)
 
-        ds3 = PercolationDataset(graph_seed=10, embed_seed=21, value_seed=30)
+        ds3 = PercolationDataset("distribution", seeds=Seeds(graph=10, embed=21, value=30))
         _points3, _latents3, X3, y3 = ds3.construct_embed(size=size, d=d)
 
-        ds4 = PercolationDataset(graph_seed=10, embed_seed=20, value_seed=31)
+        ds4 = PercolationDataset("distribution", seeds=Seeds(graph=10, embed=20, value=31))
         _points4, _latents4, X4, y4 = ds4.construct_embed(size=size, d=d)
 
         # Compare embeddings
@@ -181,7 +183,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_overlapping_points_consistent_across_sizes(self):
         """Test that datasets generated with different sizes are consistent for overlapping points."""
-        ds = PercolationDataset(graph_seed=5, embed_seed=6, value_seed=7)
+        ds = PercolationDataset("distribution", seeds=Seeds(graph=5, embed=6, value=7))
         points_small, latents_small, _X_small, y_small = ds.construct_embed(size=50, d=10)
         points_large, latents_large, _X_large, y_large = ds.construct_embed(size=100, d=10)
 
@@ -252,7 +254,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
-        points, latents = PercolationDataset(graph_seed=0, create_prob=0).construct(size=50)
+        points, latents = PercolationDataset("one_cluster", seeds=Seeds(graph=0)).construct(size=50)
         G = nx.DiGraph()
 
         # Collect all nodes involved
@@ -284,7 +286,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
 
     def test_embedding_single_cluster(self):
         """Test that embedding a single cluster works correctly."""
-        points, latents, X, y = PercolationDataset(graph_seed=0, embed_seed=1, create_prob=0).construct_embed(size=50, d=10)
+        points, latents, X, y = PercolationDataset("one_cluster", seeds=Seeds(graph=0, embed=1)).construct_embed(size=50, d=10)
         # Check for NaNs and Infs in embeddings
         self.assertFalse(np.isnan(X).any(), "Embeddings contain NaN values")
         self.assertFalse(np.isinf(X).any(), "Embeddings contain Inf values")
@@ -354,9 +356,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_ratio_effect_on_loss(self):
         """Test that increasing ratio increases baseline MSE."""
         size = 1000
-        points_01, _latents01, _X01, _y01 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.1}).construct_embed(size=size, d=16)
-        points_05, _latents05, _X05, _y05 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.5}).construct_embed(size=size, d=16)
-        points_09, _latents09, _X09, _y09 = PercolationDataset(graph_seed=0, value_generator_kwargs={'ratio': 0.9}).construct_embed(size=size, d=16)
+        points_01, _latents01, _X01, _y01 = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.1}, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
+        points_05, _latents05, _X05, _y05 = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
+        points_09, _latents09, _X09, _y09 = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.9}, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
 
         mse_01 = ground_truth_1nn_baseline(points_01, seed=42)
         mse_05 = ground_truth_1nn_baseline(points_05, seed=42)
@@ -370,7 +372,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         d = 100
         size = 1000
 
-        dataset = PercolationDataset(graph_seed=20, embed_seed=21, value_seed=22, create_prob=0)
+        dataset = PercolationDataset("one_cluster", seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         nn = NearestNeighbors(n_neighbors=1).fit(X_large)
 
@@ -391,7 +393,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size_delta = size // 10
         bound = 0.03 # Fairly tight bound, variance is small across seeds
 
-        dataset = PercolationDataset(graph_seed=20, embed_seed=21, value_seed=22)
+        dataset = PercolationDataset("distribution", seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
 
@@ -407,7 +409,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.dataset = PercolationDataset(graph_seed=42, embed_seed=43, value_seed=44)
+        cls.dataset = PercolationDataset("distribution", seeds=Seeds(graph=42, embed=43, value=44))
         cls.size = 100000
         cls.d = 128
         points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
