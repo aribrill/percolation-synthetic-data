@@ -34,15 +34,24 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         self.dataset = PercolationDataset("distribution", seeds=Seeds(graph=0, embed=1, value=2))
 
     def test_initialization_validation(self):
-        """Test that invalid create_prob and split_prob values raise ValueError."""
+        """Test that invalid parameter values raise ValueError."""
+        with self.assertRaises(ValueError):
+            PercolationDataset("invalid_structure") # type: ignore
         with self.assertRaises(ValueError):
             PercolationDataset("custom", create_prob=-0.1)
         with self.assertRaises(ValueError):
             PercolationDataset("custom", create_prob=1.1)
         with self.assertRaises(ValueError):
+            PercolationDataset("custom")
+        with self.assertRaises(ValueError):
             PercolationDataset("distribution", split_prob=-0.1)
         with self.assertRaises(ValueError):
             PercolationDataset("distribution", split_prob=1.1)
+        with self.assertRaises(ValueError):
+            PercolationDataset("one_cluster", create_prob=0.5)
+        with self.assertRaises(ValueError):
+            PercolationDataset("distribution", create_prob=0.5)
+
 
     def test_construct_structure(self):
         """Test that construct generates the correct number of points and latents."""
