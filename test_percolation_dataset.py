@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import unittest
 import networkx as nx
@@ -412,13 +412,184 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         mse = np.mean((y_small - pred)**2)
         self.assertLessEqual(mse, bound, f"Mean squared error {mse} not less than bound {bound}")
 
+class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPropertiesTests directly
+    class DatasetPropertiesTests(unittest.TestCase):
+        """Tests that validate the properties of the generated dataset, such as degree distribution, embedding properties, and data integrity."""
 
-class TestPercolationDatasetProperties(unittest.TestCase):
+        # Set up by subclasses in setUpClass to avoid expensive dataset generation for each test method
+        dataset: PercolationDataset
+        size: int
+        d: int
+        points: List['Node']
+        latents: Dict[int, 'Node']
+        cluster_sizes: Counter
+        X: np.ndarray
+        y: np.ndarray
+        ground_truth_features: GroundTruthFeatures
+
+        def test_degree_distribution(self):
+            """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
+            # Get degrees, skipping small clusters
+            size_threshold = 100
+            degrees = [len(node.neighbors) for node in self.points if self.cluster_sizes[node.cluster_idx] >= size_threshold]
+
+            # Calculate empirical PMF
+            val, counts = np.unique(degrees, return_counts=True)
+            pk_dict = dict(zip(val, counts / self.size))
+
+            max_degree = max(degrees)
+            domain = np.arange(1, max_degree + 1)
+
+            pk = np.array([pk_dict.get(k, 0.0) for k in domain])
+
+            # Calculate expected PMF (Shifted Poisson: mu=1, loc=1)
+            # P(k) = exp(-1) * 1^(k-1) / (k-1)!
+            qk = stats.poisson.pmf(domain, mu=1, loc=1)
+
+            # Normalize qk to ensure it sums to 1 over the domain (handling tail truncation)
+            # This ensures we compare the shape effectively within the observed support
+            qk = qk / qk.sum()
+
+            # Compute KL Divergence
+            kl_div = stats.entropy(pk, qk)
+
+            threshold = 0.001
+            self.assertLess(kl_div, threshold, f"KL divergence {kl_div:.6f} exceeds threshold {threshold}")
+
+            
+        def test_data_integrity(self):
+            """Test that the embeddings and labels are valid data."""
+
+            # Check shapes
+            self.assertEqual(self.X.shape, (self.size, self.d))
+            self.assertEqual(self.y.shape, (self.size,))
+
+            # Check for NaNs and Infs in embeddings
+            self.assertFalse(np.isnan(self.X).any(), "Embeddings contain NaN values")
+            self.assertFalse(np.isinf(self.X).any(), "Embeddings contain Inf values")
+
+            # Check for NaNs and Infs in labels
+            self.assertFalse(np.isnan(self.y).any(), "Labels contain NaN values")
+            self.assertFalse(np.isinf(self.y).any(), "Labels contain Inf values")
+
+        def test_feature_variability(self):
+            """Test that the features have reasonable variance."""
+            variances = self.X.var(axis=0)
+            min_var = 0.01
+            max_var = 1.0
+            self.assertTrue(np.all(variances > min_var), f"Feature variances are too small: {variances}")
+            self.assertTrue(np.all(variances < max_var), f"Feature variances are too large: {variances}")
+
+        def test_embedding_distribution(self):
+            """Test that the embeddings have approximately zero mean and consistent standard deviations."""
+            self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), "Embeddings do not have mean close to 0")
+            relative_std = self.X.std(axis=0).std() / self.X.std(axis=0).mean()
+            self.assertLess(relative_std, 0.1, "Embeddings do not have consistent standard deviations")
+
+        def test_label_distribution(self):
+            """Test that the regression labels have approximately zero mean and unit standard deviation."""
+            self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
+            self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg="Labels do not have standard deviation close to 1")
+
+        def test_feature_label_correlation(self):
+            """Test that the features and labels are weakly correlated."""
+            r = np.array([np.corrcoef(self.X[:, j], self.y)[0, 1] for j in range(self.X.shape[1])])
+            self.assertTrue(np.max(np.abs(r)) > 0.01, "Features and labels are not correlated")
+            self.assertTrue(np.max(np.abs(r)) < 0.5, "Features and labels are too strongly correlated")
+
+        def test_baseline_performance(self):
+            """Test that simple baseline models perform poorly."""
+            cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
+
+            model = DummyRegressor(strategy='mean')
+            score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
+            self.assertGreater(score, 0.9, f"Mean baseline performance is too good, score: {score}")
+
+            model = Ridge(alpha=1.0)
+            score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
+            self.assertGreater(score, 0.9, f"Ridge baseline performance is too good, score: {score}")
+
+        def test_ground_truth_features(self):
+            """Test that ground truth features are correctly computed."""
+            self.assertTrue(all(a <= b for a, b in zip(self.ground_truth_features.pidx2lidx.keys(),
+                                                    list(self.ground_truth_features.pidx2lidx.keys())[1:])),
+                            "pidx2lidx keys are not in sorted order")
+            for lst in self.ground_truth_features.pidx2lidx.values():
+                self.assertTrue(all(a <= b for a, b in zip(lst, lst[1:])), "pidx2lidx values are not in sorted order")
+                self.assertEqual(len(np.unique(lst)), len(lst), "pidx2lidx values are not unique")
+
+            self.assertTrue(all(a <= b for a, b in zip(self.ground_truth_features.lidx2pidx.keys(),
+                                                    list(self.ground_truth_features.lidx2pidx.keys())[1:])),
+                            "lidx2pidx keys are not in sorted order")
+            for lst in self.ground_truth_features.lidx2pidx.values():
+                self.assertTrue(all(a <= b for a, b in zip(lst, lst[1:])), "lidx2pidx values are not in sorted order")
+                self.assertEqual(len(np.unique(lst)), len(lst), "lidx2pidx values are not unique")
+
+            self.assertEqual(len(self.ground_truth_features.pidx2lidx), self.ground_truth_features.n_samples,
+                            "pidx2lidx length does not match number of samples")
+            self.assertEqual(len(self.ground_truth_features.lidx2pidx), self.ground_truth_features.n_latents,
+                            "lidx2pidx length does not match number of latents")
+            self.assertEqual(len(self.ground_truth_features.latent2lidx), self.ground_truth_features.n_latents,
+                            "latent2lidx length does not match number of latents")
+            self.assertEqual(len(self.ground_truth_features.lidx2latent), self.ground_truth_features.n_latents,
+                            "lidx2latent length does not match number of latents")
+            for k, v in self.ground_truth_features.latent2lidx.items():
+                self.assertEqual(k, self.ground_truth_features.lidx2latent[self.ground_truth_features.latent2lidx[k]],
+                                "latent2lidx and lidx2latent do not match")
+            for k, v in self.ground_truth_features.lidx2latent.items():
+                self.assertEqual(k, self.ground_truth_features.latent2lidx[self.ground_truth_features.lidx2latent[k]],
+                                "lidx2latent and latent2lidx do not match")
+                            
+        def test_neighbor_graph_matches_embeddings(self):
+            """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
+            n_sample_points = 250
+            rng = np.random.default_rng(42)
+            sample_inds = rng.choice(self.size, size=n_sample_points, replace=False)
+            X_sq = np.sum(self.X**2, axis=1)
+            point_idx2idx = {p.point_idx: i for i, p in enumerate(self.points)}
+            for idx in sample_inds:
+                point = self.points[idx]
+                neighbors = [p for p in point.neighbors]
+                neighbor_inds = np.array([point_idx2idx[p.point_idx] for p in neighbors], dtype=int)
+                is_neighbor = np.zeros(self.size, dtype=bool)
+                is_neighbor[neighbor_inds] = True
+                is_neighbor[idx] = True # exclude self
+                dists_sq = X_sq[idx] + X_sq - 2*self.X[idx] @ self.X.T
+                max_neighbor = dists_sq[is_neighbor].max()
+                min_non_neighbor = dists_sq[~is_neighbor].min()
+                self.assertGreater(min_non_neighbor, max_neighbor,
+                                f"Nearest embedded neighbors of point {point.point_idx} are not nearest graph neighbors")
+
+        def test_point_values_match_labels(self):
+            """Test that point values match labels."""
+            point_labels = np.array([p.value + p.error for p in self.points])
+            self.assertTrue(np.allclose(point_labels, self.y), "Point values do not match labels")
+
+
+class TestOneCluster(BaseTestWrapper.DatasetPropertiesTests, unittest.TestCase):
     """Validate the properties of the generated dataset."""
 
     @classmethod
     def setUpClass(cls):
-        print("Setting up dataset for TestPercolationDatasetProperties...")
+        print("Setting up dataset for TestOneCluster...")
+        cls.dataset = PercolationDataset("one_cluster", seeds=Seeds(graph=10, embed=11, value=12))
+        cls.size = 10000
+        cls.d = 128
+        points, latents, X, y = cls.dataset.construct_embed(size=cls.size, d=cls.d)
+        cls.points = points
+        cls.latents = latents
+        cls.cluster_sizes = Counter([p.cluster_idx for p in points])
+        cls.X = X
+        cls.y = y
+        cls.ground_truth_features = GroundTruthFeatures(points, latents)
+
+
+class TestLargeDistribution(BaseTestWrapper.DatasetPropertiesTests, unittest.TestCase):
+    """Validate the properties of the generated dataset."""
+
+    @classmethod
+    def setUpClass(cls):
+        print("Setting up dataset for TestLargeDistribution...")
         cls.dataset = PercolationDataset("distribution", seeds=Seeds(graph=42, embed=43, value=44))
         cls.size = 100000
         cls.d = 128
@@ -429,35 +600,6 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         cls.X = X
         cls.y = y
         cls.ground_truth_features = GroundTruthFeatures(points, latents)
-
-    def test_degree_distribution(self):
-        """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
-        # Get degrees, skipping small clusters
-        size_threshold = 100
-        degrees = [len(node.neighbors) for node in self.points if self.cluster_sizes[node.cluster_idx] >= size_threshold]
-
-        # Calculate empirical PMF
-        val, counts = np.unique(degrees, return_counts=True)
-        pk_dict = dict(zip(val, counts / self.size))
-
-        max_degree = max(degrees)
-        domain = np.arange(1, max_degree + 1)
-
-        pk = np.array([pk_dict.get(k, 0.0) for k in domain])
-
-        # Calculate expected PMF (Shifted Poisson: mu=1, loc=1)
-        # P(k) = exp(-1) * 1^(k-1) / (k-1)!
-        qk = stats.poisson.pmf(domain, mu=1, loc=1)
-
-        # Normalize qk to ensure it sums to 1 over the domain (handling tail truncation)
-        # This ensures we compare the shape effectively within the observed support
-        qk = qk / qk.sum()
-
-        # Compute KL Divergence
-        kl_div = stats.entropy(pk, qk)
-
-        threshold = 0.001
-        self.assertLess(kl_div, threshold, f"KL divergence {kl_div:.6f} exceeds threshold {threshold}")
 
     def test_size_distribution(self):
         """Test that size distribution is well fit by a power law using maximum likelihood."""
@@ -473,116 +615,9 @@ class TestPercolationDatasetProperties(unittest.TestCase):
         expected_alpha = 2.5
         sigma_threshold = 2.0
         self.assertAlmostEqual(alpha, expected_alpha, delta=sigma_threshold*sigma,
-                               msg=f"Estimated alpha {alpha:.4f} deviates more than {sigma_threshold} sigma "
-                                   f"{sigma:.4f} from expected {expected_alpha}")
+                            msg=f"Estimated alpha {alpha:.4f} deviates more than {sigma_threshold} sigma "
+                                f"{sigma:.4f} from expected {expected_alpha}")
         
-    def test_data_integrity(self):
-        """Test that the embeddings and labels are valid data."""
-
-        # Check shapes
-        self.assertEqual(self.X.shape, (self.size, self.d))
-        self.assertEqual(self.y.shape, (self.size,))
-
-        # Check for NaNs and Infs in embeddings
-        self.assertFalse(np.isnan(self.X).any(), "Embeddings contain NaN values")
-        self.assertFalse(np.isinf(self.X).any(), "Embeddings contain Inf values")
-
-        # Check for NaNs and Infs in labels
-        self.assertFalse(np.isnan(self.y).any(), "Labels contain NaN values")
-        self.assertFalse(np.isinf(self.y).any(), "Labels contain Inf values")
-
-    def test_feature_variability(self):
-        """Test that the features have reasonable variance."""
-        variances = self.X.var(axis=0)
-        min_var = 0.01
-        max_var = 1.0
-        self.assertTrue(np.all(variances > min_var), f"Feature variances are too small: {variances}")
-        self.assertTrue(np.all(variances < max_var), f"Feature variances are too large: {variances}")
-
-    def test_embedding_distribution(self):
-        """Test that the embeddings have approximately zero mean and consistent standard deviations."""
-        self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), "Embeddings do not have mean close to 0")
-        relative_std = self.X.std(axis=0).std() / self.X.std(axis=0).mean()
-        self.assertLess(relative_std, 0.1, "Embeddings do not have consistent standard deviations")
-
-    def test_label_distribution(self):
-        """Test that the regression labels have approximately zero mean and unit standard deviation."""
-        self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
-        self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg="Labels do not have standard deviation close to 1")
-
-    def test_feature_label_correlation(self):
-        """Test that the features and labels are weakly correlated."""
-        r = np.array([np.corrcoef(self.X[:, j], self.y)[0, 1] for j in range(self.X.shape[1])])
-        self.assertTrue(np.max(np.abs(r)) > 0.01, "Features and labels are not correlated")
-        self.assertTrue(np.max(np.abs(r)) < 0.5, "Features and labels are too strongly correlated")
-
-    def test_baseline_performance(self):
-        """Test that simple baseline models perform poorly."""
-        cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
-
-        model = DummyRegressor(strategy='mean')
-        score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-        self.assertGreater(score, 0.9, f"Mean baseline performance is too good, score: {score}")
-
-        model = Ridge(alpha=1.0)
-        score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-        self.assertGreater(score, 0.9, f"Ridge baseline performance is too good, score: {score}")
-
-    def test_ground_truth_features(self):
-        """Test that ground truth features are correctly computed."""
-        self.assertTrue(all(a <= b for a, b in zip(self.ground_truth_features.pidx2lidx.keys(),
-                                                   list(self.ground_truth_features.pidx2lidx.keys())[1:])),
-                        "pidx2lidx keys are not in sorted order")
-        for lst in self.ground_truth_features.pidx2lidx.values():
-            self.assertTrue(all(a <= b for a, b in zip(lst, lst[1:])), "pidx2lidx values are not in sorted order")
-            self.assertEqual(len(np.unique(lst)), len(lst), "pidx2lidx values are not unique")
-
-        self.assertTrue(all(a <= b for a, b in zip(self.ground_truth_features.lidx2pidx.keys(),
-                                                   list(self.ground_truth_features.lidx2pidx.keys())[1:])),
-                        "lidx2pidx keys are not in sorted order")
-        for lst in self.ground_truth_features.lidx2pidx.values():
-            self.assertTrue(all(a <= b for a, b in zip(lst, lst[1:])), "lidx2pidx values are not in sorted order")
-            self.assertEqual(len(np.unique(lst)), len(lst), "lidx2pidx values are not unique")
-
-        self.assertEqual(len(self.ground_truth_features.pidx2lidx), self.ground_truth_features.n_samples,
-                         "pidx2lidx length does not match number of samples")
-        self.assertEqual(len(self.ground_truth_features.lidx2pidx), self.ground_truth_features.n_latents,
-                         "lidx2pidx length does not match number of latents")
-        self.assertEqual(len(self.ground_truth_features.latent2lidx), self.ground_truth_features.n_latents,
-                         "latent2lidx length does not match number of latents")
-        self.assertEqual(len(self.ground_truth_features.lidx2latent), self.ground_truth_features.n_latents,
-                         "lidx2latent length does not match number of latents")
-        for k, v in self.ground_truth_features.latent2lidx.items():
-            self.assertEqual(k, self.ground_truth_features.lidx2latent[self.ground_truth_features.latent2lidx[k]],
-                             "latent2lidx and lidx2latent do not match")
-        for k, v in self.ground_truth_features.lidx2latent.items():
-            self.assertEqual(k, self.ground_truth_features.latent2lidx[self.ground_truth_features.lidx2latent[k]],
-                             "lidx2latent and latent2lidx do not match")
-                        
-    def test_neighbor_graph_matches_embeddings(self):
-        """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
-        n_sample_points = 250
-        rng = np.random.default_rng(42)
-        sample_inds = rng.choice(self.size, size=n_sample_points, replace=False)
-        X_sq = np.sum(self.X**2, axis=1)
-        point_idx2idx = {p.point_idx: i for i, p in enumerate(self.points)}
-        for idx in sample_inds:
-            point = self.points[idx]
-            neighbors = [p for p in point.neighbors]
-            neighbor_inds = np.array([point_idx2idx[p.point_idx] for p in neighbors], dtype=int)
-            is_neighbor = np.zeros(self.size, dtype=bool)
-            is_neighbor[neighbor_inds] = True
-            is_neighbor[idx] = True # exclude self
-            dists_sq = X_sq[idx] + X_sq - 2*self.X[idx] @ self.X.T
-            max_neighbor = dists_sq[is_neighbor].max()
-            min_non_neighbor = dists_sq[~is_neighbor].min()
-            self.assertGreater(min_non_neighbor, max_neighbor,
-                               f"Nearest embedded neighbors of point {point.point_idx} are not nearest graph neighbors")
-
-    def test_point_values_match_labels(self):
-        """Test that point values match labels."""
-        point_labels = np.array([p.value + p.error for p in self.points])
-        self.assertTrue(np.allclose(point_labels, self.y), "Point values do not match labels")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
