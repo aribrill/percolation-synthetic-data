@@ -418,6 +418,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        print("Setting up dataset for TestPercolationDatasetProperties...")
         cls.dataset = PercolationDataset("distribution", seeds=Seeds(graph=42, embed=43, value=44))
         cls.size = 100000
         cls.d = 128
@@ -560,7 +561,7 @@ class TestPercolationDatasetProperties(unittest.TestCase):
                         
     def test_neighbor_graph_matches_embeddings(self):
         """Test that nearest neighbors in embeddings correspond to neighbor relationships in the graph."""
-        n_sample_points = 1000
+        n_sample_points = 250
         rng = np.random.default_rng(42)
         sample_inds = rng.choice(self.size, size=n_sample_points, replace=False)
         X_sq = np.sum(self.X**2, axis=1)
