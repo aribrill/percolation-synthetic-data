@@ -7,7 +7,7 @@ data_folder_path = Path("../")
 data_path = data_folder_path / "percolation_dataset_size2000000_dim100_seed0.npz"
 feature_data_path = data_folder_path / "percolation_dataset_size2000000_dim100_seed0_gt_features.npz"
 meta_data_path = data_folder_path / "percolation_dataset_size2000000_dim100_seed0_gt_metadata.npz"
-base_name = data_path.stem  # "percolation_dataset_size1000000_dim100_seed0"
+base_name = data_path.stem  # "percolation_dataset_size2000000_dim100_seed0"
 
 
 # Set filter parameters 

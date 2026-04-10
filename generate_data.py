@@ -3,9 +3,9 @@ from scipy import sparse
 
 from percolation_dataset import PercolationDataset, GroundTruthFeatures
 
-n_datasets = 1
-dataset_size = 200000
-embedding_dimension = 100
+n_datasets = 10
+dataset_size = 100000
+embedding_dimension = 128
 
 for seed in range(n_datasets):
     print(f"Generating dataset {seed}...")
