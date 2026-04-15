@@ -480,31 +480,39 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             self.assertTrue(np.all(variances > min_var), f"Feature variances are too small: {variances}")
             self.assertTrue(np.all(variances < max_var), f"Feature variances are too large: {variances}")
 
-        def test_embedding_distribution(self):
-            """Test that the embeddings have approximately zero mean and consistent standard deviations."""
+        def test_embedding_distribution_mean(self):
+            """Test that the embeddings have approximately zero mean."""
             self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), "Embeddings do not have mean close to 0")
+
+        def test_embedding_distribution_std(self):
+            """Test that the embeddings have consistent standard deviations."""
             relative_std = self.X.std(axis=0).std() / self.X.std(axis=0).mean()
             self.assertLess(relative_std, 0.1, "Embeddings do not have consistent standard deviations")
 
-        def test_label_distribution(self):
-            """Test that the regression labels have approximately zero mean and unit standard deviation."""
+        def test_label_distribution_mean(self):
+            """Test that the regression labels have approximately zero mean."""
             self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
+        
+        def test_label_distribution_std(self):
+            """Test that the regression labels have approximately unit standard deviation."""
             self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg="Labels do not have standard deviation close to 1")
 
         def test_feature_label_correlation(self):
             """Test that the features and labels are weakly correlated."""
             r = np.array([np.corrcoef(self.X[:, j], self.y)[0, 1] for j in range(self.X.shape[1])])
-            self.assertTrue(np.max(np.abs(r)) > 0.01, "Features and labels are not correlated")
-            self.assertTrue(np.max(np.abs(r)) < 0.5, "Features and labels are too strongly correlated")
+            self.assertTrue(np.max(np.abs(r)) > 0.01, f"Features and labels are not correlated, correlation coefficients: {r}")
+            self.assertTrue(np.max(np.abs(r)) < 0.5, f"Features and labels are too strongly correlated, correlation coefficients: {r}")
 
-        def test_baseline_performance(self):
-            """Test that simple baseline models perform poorly."""
+        def test_mean_performance(self):
+            """Test that simple mean baseline model performs poorly."""
             cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
-
             model = DummyRegressor(strategy='mean')
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
             self.assertGreater(score, 0.9, f"Mean baseline performance is too good, score: {score}")
 
+        def test_ridge_performance(self):
+            """Test that simple Ridge regression model performs poorly."""
+            cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
             model = Ridge(alpha=1.0)
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
             self.assertGreater(score, 0.9, f"Ridge baseline performance is too good, score: {score}")
