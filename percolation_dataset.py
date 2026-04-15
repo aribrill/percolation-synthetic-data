@@ -352,7 +352,7 @@ class GroundTruthFeatures:
         self.n_latents = len(self.lidx2pidx)
 
 
-    def get_metadata(self) -> dict:
+    def get_summary_features(self) -> dict:
         """
         Returns a dict of per-point metadata aligned with the feature matrix rows.
 
@@ -360,17 +360,17 @@ class GroundTruthFeatures:
             dict with keys:
                 - cluster_id: cluster index of each point
                 - cluster_size: number of points in each point's cluster
-                - tree_height: number of latent ancestors of each point
+                - latent_tree_height: number of latent ancestors of each point
         """
 
         counts = Counter(p.cluster_idx for p in self.points)
         return {
-            'cluster_id':   [p.cluster_idx for p in self.points],
-            'cluster_size': [counts[p.cluster_idx] for p in self.points],
-            'tree_height':  [len(self.pidx2lidx[i]) for i, _ in enumerate(self.points)],
+            'cluster_id':        [p.cluster_idx for p in self.points],
+            'cluster_size':      [counts[p.cluster_idx] for p in self.points],
+            'latent_tree_height': [len(self.pidx2lidx[i]) for i, _ in enumerate(self.points)],
         }
 
-    def get_features(self, n_features: Optional[int] = None, use_values: bool = False) -> sparse.csr_matrix:
+    def get_latent_features(self, n_features: Optional[int] = None, use_values: bool = False) -> sparse.csr_matrix:
         """
         Returns sparse matrix of latent features for each data point.
 

@@ -19,7 +19,7 @@ In the generation stage, each iteration follows one of two alternatives. With pr
 
 ## Usage
 
-A synthetic dataset is generated using `PercolationDataset.construct_embed()`. Ground-truth latent features for each sample can be generated as a sparse matrix using `GroundTruthFeatures.get_features()`. Because the dataset generation is stochastic, it is recommended to train and test models using multiple datasets generated with different random seeds. An example script to generate multiple datasets is provided in [generate_data.py](generate_data.py).
+A synthetic dataset is generated using `PercolationDataset.construct_embed()`. Ground-truth latent features for each sample can be generated as a sparse matrix using `GroundTruthFeatures.get_latent_features()`. Because the dataset generation is stochastic, it is recommended to train and test models using multiple datasets generated with different random seeds. An example script to generate multiple datasets is provided in [generate_data.py](generate_data.py).
 
 Datasets generated in the format of [generate_data.py](generate_data.py) can be loaded with:
 
