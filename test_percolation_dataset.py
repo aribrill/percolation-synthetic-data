@@ -302,34 +302,33 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         points, latents = self.dataset.construct(size=size)
         gt_features = GroundTruthFeatures(points, latents)
         # Default n_features equal n_latents
-        X_gt = gt_features.get_features()
+        X_gt = gt_features.get_latent_features()
         assert X_gt.shape is not None
         self.assertEqual(X_gt.shape[1], gt_features.n_latents,
                          "Ground truth feature matrix has incorrect number of columns")
         # Setting n_features yields correct shape
         n_features = gt_features.n_latents // 2
-        X_gt = gt_features.get_features(n_features=n_features)
+        X_gt = gt_features.get_latent_features(n_features=n_features)
         assert X_gt.shape is not None
         self.assertEqual(X_gt.shape[1], n_features,
                          "Ground truth feature matrix has incorrect number of columns when n_features is set")
         # Setting n_features less than 1 raises error
         with self.assertRaises(ValueError):
-            gt_features.get_features(n_features=0)
+            gt_features.get_latent_features(n_features=0)
         # Setting n_features greater than n_latents raises error
         with self.assertRaises(ValueError):
-            gt_features.get_features(n_features=gt_features.n_latents + 1)
+            gt_features.get_latent_features(n_features=gt_features.n_latents + 1)
 
     def test_ground_truth_feature_matrix(self):
         """Test that ground truth feature matrix has correct shape and content."""
         size = 1000
         points, latents = self.dataset.construct(size=size)
         gt_features = GroundTruthFeatures(points, latents)
-        X_gt = gt_features.get_features()
+        X_gt = gt_features.get_latent_features()
 
         assert X_gt.shape is not None
         self.assertEqual(X_gt.shape[0], size, "Ground truth feature matrix has incorrect number of rows")
-        self.assertEqual(X_gt.shape[1], gt_features.n_latents,
-                         "Ground truth feature matrix has incorrect number of columns")
+        self.assertEqual(X_gt.shape[1], gt_features.n_latents,"Ground truth feature matrix has incorrect number of columns")
 
         # Verify that each row has exactly one non-zero entry per latent node it is associated with
         for pidx in range(size):
@@ -339,6 +338,64 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             self.assertEqual(set(non_zero_indices), set(expected_latent_indices),
                              f"Row {pidx} of ground truth feature matrix has incorrect non-zero entries")
             
+    def test_get_summary_features(self):
+        """Test that get_summary_features returns correct per-point metadata aligned with feature matrix rows."""
+        size = 1000
+        points, latents = self.dataset.construct(size=size)
+        gt_features = GroundTruthFeatures(points, latents)
+        metadata = gt_features.get_summary_features()
+
+        self.assertIsInstance(metadata, dict)
+        self.assertListEqual(list(metadata.keys()), ['cluster_id', 'cluster_size', 'latent_tree_height'])
+        for value in metadata.values():
+            self.assertEqual(len(value), size)
+
+        counts = Counter(p.cluster_idx for p in points)
+        for i, point in enumerate(points):
+            self.assertEqual(metadata['cluster_id'][i], point.cluster_idx)
+            self.assertEqual(metadata['cluster_size'][i], counts[point.cluster_idx])
+            self.assertEqual(metadata['latent_tree_height'][i], len(gt_features.pidx2lidx[i]))
+
+    def test_get_latent_features_use_values(self):
+        """Test that get_latent_features(use_values=True) stores correct z_u values."""
+        size = 100
+        points, latents, X, y = self.dataset.construct_embed(size=size, d=16)
+        gt_features = GroundTruthFeatures(points, latents)
+
+        X_binary = gt_features.get_latent_features(use_values=False)
+        X_values = gt_features.get_latent_features(use_values=True)
+
+        # Sparsity pattern must be identical
+        self.assertEqual(X_binary.nnz, X_values.nnz)
+
+        # Binary mode still returns 1s
+        self.assertTrue(np.all(X_binary.data == 1))
+
+        # Check z_u values are correct for each latent
+        for lidx in range(gt_features.n_latents):
+            latent_node = gt_features.latents[gt_features.lidx2latent[lidx]]
+            if latent_node.parents:
+                parent = list(latent_node.parents)[0]
+                expected_z_u = latent_node.value - parent.value
+            else:
+                expected_z_u = latent_node.value
+            col = X_values.getcol(lidx)
+            nonzero_vals = col.data
+            if len(nonzero_vals) > 0:
+                # Note: np.testing.assert_allclose would give richer failure messages
+                self.assertTrue(np.allclose(nonzero_vals, expected_z_u),
+                    msg=f"Incorrect z_u value for latent {lidx}")
+
+        # Sum of z_u telescopes to the deepest ancestor latent's value
+        # (point.value also includes the leaf's own Gaussian draw, not stored in features)
+        for pidx, point in enumerate(points):
+            row = X_values.getrow(pidx)
+            ancestors = gt_features.pidx2lidx[pidx]
+            if ancestors:
+                deepest_latent = gt_features.latents[gt_features.lidx2latent[ancestors[-1]]]
+                self.assertAlmostEqual(row.sum(), deepest_latent.value, places=10,
+                    msg=f"Sum of z_u for point {pidx} does not equal deepest ancestor latent value")
+
     def test_nearest_neighbor_ground_truth(self):
         """Test that 1-NN using the ground truth points matches the embedded dataset."""
         points, _latents, X, y = self.dataset.construct_embed(size=10000, d=128)
