@@ -539,20 +539,20 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
 
         def test_embedding_distribution_mean(self):
             """Test that the embeddings have approximately zero mean."""
-            self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), "Embeddings do not have mean close to 0")
+            self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), f"Embeddings do not have mean close to 0, means: {self.X.mean(axis=0)}")
 
         def test_embedding_distribution_std(self):
             """Test that the embeddings have consistent standard deviations."""
             relative_std = self.X.std(axis=0).std() / self.X.std(axis=0).mean()
-            self.assertLess(relative_std, 0.1, "Embeddings do not have consistent standard deviations")
+            self.assertLess(relative_std, 0.1, f"Embeddings do not have consistent standard deviations, relative std: {relative_std}")
 
         def test_label_distribution_mean(self):
             """Test that the regression labels have approximately zero mean."""
-            self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg="Labels do not have mean close to 0")
+            self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg=f"Labels do not have mean close to 0, mean: {self.y.mean()}")
         
         def test_label_distribution_std(self):
             """Test that the regression labels have approximately unit standard deviation."""
-            self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg="Labels do not have standard deviation close to 1")
+            self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg=f"Labels do not have standard deviation close to 1, std: {self.y.std()}")
 
         def test_feature_label_correlation(self):
             """Test that the features and labels are weakly correlated."""
