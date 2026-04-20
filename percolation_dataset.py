@@ -257,7 +257,9 @@ class PercolationDataset:
             ss = np.random.SeedSequence(entropy=cluster_uniform_seed.entropy,
                                         spawn_key=cluster_uniform_seed.spawn_key + (points[start_idx].cluster_idx,))
             cluster_uniform_rng = np.random.default_rng(ss)
-            embeddings[root] = cluster_uniform_rng.uniform(low=-0.5, high=0.5, size=d) + scale*point_vectors[root]
+            embeddings[root] = scale*point_vectors[root]
+            if self.mode == "distribution":
+                embeddings[root] += cluster_uniform_rng.uniform(low=-0.5, high=0.5, size=d)
 
             while stack:
                 parent = stack.pop()

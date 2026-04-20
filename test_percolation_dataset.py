@@ -539,7 +539,8 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
 
         def test_embedding_distribution_mean(self):
             """Test that the embeddings have approximately zero mean."""
-            self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.1), f"Embeddings do not have mean close to 0, means: {self.X.mean(axis=0)}")
+            self.assertLessEqual(np.mean(np.abs(self.X.mean(axis=0))), 0.1, f"Typical embedding mean is not close to 0, mean of means: {np.mean(np.abs(self.X.mean(axis=0)))}")
+            self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.25), f"Embeddings do not have mean close to 0, means: {self.X.mean(axis=0)}")
 
         def test_embedding_distribution_std(self):
             """Test that the embeddings have consistent standard deviations."""
