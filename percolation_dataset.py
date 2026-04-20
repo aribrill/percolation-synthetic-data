@@ -64,14 +64,14 @@ class PercolationDataset:
             create_prob: Probability of creating a new cluster instead of splitting an existing one (only used in "custom" mode).
             split_prob: Probability of splitting neighbors when splitting a node (only used in "custom" mode).
             value_generator: Function to generate values for child nodes based on parent value and depth (only used in "custom" mode).
-            value_generator_kwargs: Additional keyword arguments to pass to the value generator function (only used in "custom" mode).
+            value_generator_kwargs: Additional keyword arguments to pass to the value generator function (only used in "custom" mode). Defaults to {'ratio': 0.9}.
             seeds: Seeds for reproducibility of different random processes.
         """
         
         self.mode = mode
         self.split_prob = split_prob
         self.value_generator = value_generator if value_generator is not None else self._default_generate_value
-        self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.5}
+        self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.9}
         self.seeds = seeds if seeds is not None else Seeds()
 
         if self.mode not in ("one_cluster", "distribution", "custom"):

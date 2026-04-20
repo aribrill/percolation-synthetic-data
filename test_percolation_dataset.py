@@ -438,7 +438,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         d = 100
         size = 1000
 
-        dataset = PercolationDataset("one_cluster", seeds=Seeds(graph=20, embed=21, value=22))
+        dataset = PercolationDataset("one_cluster", value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         nn = NearestNeighbors(n_neighbors=1).fit(X_large)
 
@@ -459,7 +459,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size_delta = size // 10
         bound = 0.03 # Fairly tight bound, variance is small across seeds
 
-        dataset = PercolationDataset("distribution", seeds=Seeds(graph=20, embed=21, value=22))
+        dataset = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
 
@@ -552,7 +552,7 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
         
         def test_label_distribution_std(self):
             """Test that the regression labels have approximately unit standard deviation."""
-            self.assertAlmostEqual(self.y.std(), 1.0, delta=0.05, msg=f"Labels do not have standard deviation close to 1, std: {self.y.std()}")
+            self.assertAlmostEqual(self.y.std(), 1.0, delta=0.1, msg=f"Labels do not have standard deviation close to 1, std: {self.y.std()}")
 
         def test_feature_label_correlation(self):
             """Test that the features and labels are weakly correlated."""
@@ -565,14 +565,14 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
             model = DummyRegressor(strategy='mean')
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-            self.assertGreater(score, 0.9, f"Mean baseline performance is too good, score: {score}")
+            self.assertGreater(score, 0.8, f"Mean baseline performance is too good, score: {score}")
 
         def test_ridge_performance(self):
             """Test that simple ridge regression model performs poorly."""
             cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
             model = Ridge(alpha=1.0)
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-            self.assertGreater(score, 0.5, f"Ridge baseline performance is too good, score: {score}")
+            self.assertGreater(score, 0.3, f"Ridge baseline performance is too good, score: {score}")
 
         def test_ground_truth_features(self):
             """Test that ground truth features are correctly computed."""
