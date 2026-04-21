@@ -261,6 +261,47 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             self.assertTrue(nx.is_tree(G), "Neighbor graph is not a tree (it should be connected and acyclic)")
             start_idx = end_idx
 
+    def test_isomorphism_class_frequencies(self):
+        """Test that the frequencies of isomorphism classes of small clusters match the expected distribution."""
+
+        # Shapes on n=6 and their labeled-tree counts (= 6! / |Aut|).
+        # Sum = 6^4 = 1296 (Cayley). Shape key is sorted degree sequence, with a
+        # leaf-neighbor count of the unique deg-3 vertex to split the two spiders.
+        _TOTAL = 1296
+        _EXPECTED_COUNTS = {
+            (1, 1, 2, 2, 2, 2):      360,   # P_6                  |Aut| = 2
+            (1, 1, 1, 1, 1, 5):        6,   # star K_{1,5}         |Aut| = 120
+            (1, 1, 1, 1, 2, 4):      120,   # broom (K_{1,4}+edge) |Aut| = 6
+            (1, 1, 1, 1, 3, 3):       90,   # double star          |Aut| = 8
+            ((1, 1, 1, 2, 2, 3), 1): 360,   # spider S(2,2,1)      |Aut| = 2
+            ((1, 1, 1, 2, 2, 3), 2): 360,   # spider S(3,1,1)      |Aut| = 2
+        }
+        assert sum(_EXPECTED_COUNTS.values()) == _TOTAL
+
+        size = 6
+        n_datasets = 3000
+        alpha = 1e-3
+
+        obs = {}
+        for i in range(n_datasets):
+            points, _ = PercolationDataset("one_cluster", seeds=Seeds(graph=i)).construct(size=size)
+            edges = [(p.point_idx, nbr.point_idx) for p in points for nbr in p.neighbors] # duplicates edges
+            degrees = {p.point_idx: len(p.neighbors) for p in points}
+            ds = tuple(sorted(degrees.values()))
+            if ds != (1, 1, 1, 2, 2, 3):
+                obs[ds] = obs.get(ds, 0) + 1
+            else:
+                c = next(k for k, v in degrees.items() if v == 3)
+                leaf_nbrs = sum(1 for u, v in edges if u == c and degrees[v] == 1)
+                obs[(ds, leaf_nbrs)] = obs.get((ds, leaf_nbrs), 0) + 1
+        
+        keys = list(_EXPECTED_COUNTS)
+        f_obs = np.fromiter((obs.get(k, 0) for k in keys), float, len(keys))
+        f_exp = np.fromiter((_EXPECTED_COUNTS[k] * n_datasets / _TOTAL for k in keys), float, len(keys))
+        chi2, p = stats.chisquare(f_obs, f_exp)
+        self.assertGreater(p, alpha, f"Observed isomorphism class frequencies {f_obs} deviate significantly from expected distribution {f_exp}, (chi2={chi2:.2f}, p={p:.4e})")
+
+
     def test_cluster_hierarchy_is_directed_tree(self):
         """Test that parent-child relationships form a directed tree (arborescence)."""
         points, latents = PercolationDataset("one_cluster", seeds=Seeds(graph=0)).construct(size=50)
