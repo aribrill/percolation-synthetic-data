@@ -1,10 +1,10 @@
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
-from itertools import islice
+from itertools import groupby, islice
+from operator import attrgetter
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 import numpy as np
-from numpy.typing import NDArray
 from scipy import sparse
 
 class Node:
@@ -57,19 +57,17 @@ class PercolationDataset:
         return base_value + rng.normal(0, std)
     
 
-    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, split_prob: float = 0.2096414, value_generator: Optional[Callable[..., float]] = None, value_generator_kwargs: Optional[Dict[str, Any]] = None, seeds: Optional[Seeds] = None):
+    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, value_generator: Optional[Callable[..., float]] = None, value_generator_kwargs: Optional[Dict[str, Any]] = None, seeds: Optional[Seeds] = None):
         """Initializes the dataset generator.
         Args:
             mode: The mode of dataset generation, either "one_cluster", "distribution", or "custom". Determines create_prob.
             create_prob: Probability of creating a new cluster instead of splitting an existing one (only used in "custom" mode).
-            split_prob: Probability of splitting neighbors when splitting a node (only used in "custom" mode).
             value_generator: Function to generate values for child nodes based on parent value and depth (only used in "custom" mode).
             value_generator_kwargs: Additional keyword arguments to pass to the value generator function (only used in "custom" mode). Defaults to {'ratio': 0.9}.
             seeds: Seeds for reproducibility of different random processes.
         """
         
         self.mode = mode
-        self.split_prob = split_prob
         self.value_generator = value_generator if value_generator is not None else self._default_generate_value
         self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.9}
         self.seeds = seeds if seeds is not None else Seeds()
@@ -89,40 +87,95 @@ class PercolationDataset:
 
         if not (0 <= self.create_prob <= 1): # type: ignore
             raise ValueError(f"create_prob must be between 0 and 1, got {self.create_prob}")
-        if not (0 <= self.split_prob <= 1):
-            raise ValueError(f"split_prob must be between 0 and 1, got {self.split_prob}")
 
-
-    def _split_node(self, node: 'Node', rng: np.random.Generator, idx_1: int, idx_2: int) -> Tuple['Node', 'Node']:
-        # Use the configured value generator, passing the node and the dataset's rng
-
-        child1 = Node(idx_1, node.cluster_idx, parents=[node], depth=node.depth + 1)
-        child2 = Node(idx_2, node.cluster_idx, parents=[node], depth=node.depth + 1)
-
-        # Clear neighbors of the current node as they are being redistributed
-        neighbors = sorted(list(node.neighbors), key=lambda n: n.point_idx)
-        node.neighbors.clear()
-
-        groups = rng.choice([1, 2], size=len(neighbors), p=[self.split_prob, 1 - self.split_prob])
-        for n, group in zip(neighbors, groups):
-            if group == 1:
-                n.neighbors.add(child1)
-                child1.neighbors.add(n)
-            else:
-                n.neighbors.add(child2)
-                child2.neighbors.add(n)
-            n.neighbors.remove(node)
-
-        child1.neighbors.add(child2)
-        child2.neighbors.add(child1)
-        node.children.add(child1)
-        node.children.add(child2)
-
-        # Update the current node to be a latent node
-        node.node_type = 'latent'
-
-        return child1, child2
     
+    def _cyclic_coalescent(self, points: List['Node'], rng: np.random.Generator) -> Dict[int, 'Node']:
+        """Constructs a percolation cluster using a cyclic coalescent algorithm."""
+
+        size = len(points)
+        if size == 1:
+            return {}
+
+        cluster_idx = points[0].cluster_idx
+        latents: Dict[int, Node] = {}
+
+        # Set up RNG
+        perm_rng, u_rng, v_rng = rng.spawn(3)
+
+        # Random initial arrangement in the cyclic array
+        perm_rng.shuffle(points)
+
+        # Cyclic linked list of active subtrees
+        nxt = list(range(1, size)) + [0]
+        st_size = [1] * size
+
+        # Union-find: position in array to subtree representative
+        uf_parent = list(range(size))
+        uf_rank   = [0] * size
+        ll_of_root = list(range(size))
+
+        def find(x):
+            while uf_parent[x] != x:
+                uf_parent[x] = uf_parent[uf_parent[x]]
+                x = uf_parent[x]
+            return x
+
+        def union(a, b, survivor):
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return
+            if uf_rank[ra] < uf_rank[rb]:
+                ra, rb = rb, ra
+            uf_parent[rb] = ra
+            if uf_rank[ra] == uf_rank[rb]:
+                uf_rank[ra] += 1
+            ll_of_root[ra] = survivor
+
+        # Binary latent tree representative for each linked-list node
+        btree_rep = [points[i] for i in range(size)]
+
+        # Generate all random variables at once for efficiency
+        all_u = u_rng.integers(size, size=size - 1)
+        all_v_frac = v_rng.random(size - 1)
+
+        for step in range(size - 1):
+            u_pos = all_u[step]
+            ll_a  = ll_of_root[find(u_pos)]
+            ll_b  = nxt[ll_a]
+
+            v_pos = (ll_b + int(all_v_frac[step] * st_size[ll_b])) % size
+
+            points[u_pos].neighbors.add(points[v_pos])
+            points[v_pos].neighbors.add(points[u_pos])
+
+            # hack to ensure unique latent node indices that don't overlap with point indices
+            latent_idx_base = 10_000_000_000 + cluster_idx * 1_000_000_000
+            internal_point_idx = latent_idx_base - step # iterate backwards since we're working up the tree from the leaves
+            child_a, child_b = btree_rep[ll_a], btree_rep[ll_b]
+            internal = Node(internal_point_idx, cluster_idx, node_type='latent', children=[child_a, child_b])
+            latents[internal_point_idx] = internal
+            child_a.parents.add(internal)
+            child_b.parents.add(internal)
+
+            st_size[ll_a] += st_size[ll_b]
+            btree_rep[ll_a] = internal
+
+            nxt[ll_a] = nxt[ll_b]
+
+            union(u_pos, v_pos, ll_a)
+
+        # Breadth-first search to set latent node depths
+        latents = dict(reversed(latents.items())) # reverse insertion order
+        _point_idx, root = next(iter(latents.items()))
+        queue = deque([(root, 0)])
+        while queue:
+            node, depth = queue.popleft()
+            node.depth = depth
+            for child in node.children:
+                queue.append((child, depth + 1))
+
+        return latents
+
 
     def construct(self, size: int) -> Tuple[List['Node'], Dict[int, 'Node']]:
         """
@@ -140,36 +193,37 @@ class PercolationDataset:
         
         # Set up RNG
         ss = np.random.SeedSequence(self.seeds.graph) if self.seeds.graph is not None else np.random.SeedSequence()
-        rvs_seed, split_seed = ss.spawn(2)
-        rvs_rng = np.random.default_rng(seed=rvs_seed)
-        split_rng = np.random.default_rng(seed=split_seed)
+        create_seed, grow_seed = ss.spawn(2)
+        create_rng = np.random.default_rng(seed=create_seed)
+        grow_rng = np.random.default_rng(seed=grow_seed)
 
-        point_idx = 0
-        cluster_idx = 0
-        root = Node(point_idx, cluster_idx, level=0)
-        points: List[Node] = [root]
+        point_idx: int = 0
+        cluster_idx: int = 0
+        points: List[Node] = []
         latents: Dict[int, Node] = {}
 
-        rvs = rvs_rng.random(size=(size, 2))
-        for i in range(1, size):
-            if rvs[i, 0] < self.create_prob:
-                node = Node(point_idx + 1, cluster_idx + 1, level=i)
+        # Generate points assigned to clusters following preferential attachment 
+        new_cluster = create_rng.random(size) < self.create_prob # type: ignore
+        u = grow_rng.random(size)
+
+        for i in range(size):
+            if new_cluster[i] or point_idx == 0:
+                node = Node(point_idx, cluster_idx, level=i)
                 points.append(node)
-                point_idx += 1
                 cluster_idx += 1
             else:
-                split_idx = int(rvs[i, 1] * i)
-                split_node = points[split_idx]
-                child1, child2 = self._split_node(split_node, split_rng, point_idx + 1, point_idx + 2)
-                child1.level, child2.level = i, i
-                latents[split_node.point_idx] = split_node
+                grow_cluster_idx = points[int(u[i] * point_idx)].cluster_idx
+                node = Node(point_idx, grow_cluster_idx, level=i)
+                points.append(node)
+            point_idx += 1
 
-                # Swap-remove to update points in O(1)
-                points[split_idx], points[-1] = points[-1], points[split_idx]
-                points.pop()
-                points.append(child1)
-                points.append(child2)                
-                point_idx += 2
+        # Apply cyclic coalescent to generate latent binary trees and connect neighboring points within each cluster
+        points.sort(key=lambda p: (p.cluster_idx, p.point_idx))
+        streams = ss.spawn(cluster_idx)
+        for cluster_idx, group in groupby(points, key=attrgetter('cluster_idx')):
+            cluster_points = list(group)
+            cluster_latents = self._cyclic_coalescent(cluster_points, rng=np.random.default_rng(seed=streams[cluster_idx]))
+            latents.update(cluster_latents)
 
         # Sort points by cluster in descending order of cluster size
         counts = Counter(p.cluster_idx for p in points)

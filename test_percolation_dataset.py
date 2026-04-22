@@ -44,10 +44,6 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         with self.assertRaises(ValueError):
             PercolationDataset("custom")
         with self.assertRaises(ValueError):
-            PercolationDataset("distribution", split_prob=-0.1)
-        with self.assertRaises(ValueError):
-            PercolationDataset("distribution", split_prob=1.1)
-        with self.assertRaises(ValueError):
             PercolationDataset("one_cluster", create_prob=0.5)
         with self.assertRaises(ValueError):
             PercolationDataset("distribution", create_prob=0.5)
@@ -245,6 +241,19 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         expected_indices = list(range(len(cluster_indices)))
         self.assertEqual(cluster_indices, expected_indices,
                          "Cluster indices are not contiguous and starting from 0")
+        
+
+    def test_point_depths(self):
+        """Test that point depths are correctly assigned based on the hierarchy."""
+        points, _latents = self.dataset.construct(size=1000)
+        for point in points:
+            expected_depth = 0
+            current = point
+            while current.parents:
+                expected_depth += 1
+                current = next(iter(current.parents)) # Get the single parent latent
+            self.assertEqual(point.depth, expected_depth,
+                             f"Point {point.point_idx} has incorrect depth {point.depth}, expected {expected_depth}")
 
     def test_neighbor_graph_is_tree(self):
         """Test that the graph formed by neighboring points is a tree."""
