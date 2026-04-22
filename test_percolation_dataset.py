@@ -87,19 +87,6 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.dataset.embed_features(points, latents, d=0)
 
-    def test_custom_value_generator(self):
-        """Test that a custom value generator is correctly utilized."""
-        def constant_gen(base_value, depth, rng, **kwargs):
-            return 100.0
-
-        ds = PercolationDataset("distribution", value_generator=constant_gen, value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(value=0))
-        points, latents = ds.construct(size=5)
-        y = ds.embed_labels(points, latents)
-
-        # Nodes generated via split (level > 0) should have value 100.0
-        for p in points:
-            if p.level > 0:
-                self.assertEqual(p.value, 100.0)
 
     def test_rng_reproducibility_for_same_dataset(self):
         """Test that multiple calls to construct_embed produce identical datasets."""
@@ -473,9 +460,9 @@ class TestPercolationDatasetBasic(unittest.TestCase):
     def test_ratio_effect_on_loss(self):
         """Test that increasing ratio increases baseline MSE."""
         size = 1000
-        points_01, _latents01, _X01, _y01 = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.1}, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
-        points_05, _latents05, _X05, _y05 = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
-        points_09, _latents09, _X09, _y09 = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.9}, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
+        points_01, _latents01, _X01, _y01 = PercolationDataset("distribution", ratio=0.1, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
+        points_05, _latents05, _X05, _y05 = PercolationDataset("distribution", ratio=0.5, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
+        points_09, _latents09, _X09, _y09 = PercolationDataset("distribution", ratio=0.9, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
 
         mse_01 = ground_truth_1nn_baseline(points_01, seed=42)
         mse_05 = ground_truth_1nn_baseline(points_05, seed=42)
@@ -490,7 +477,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         d = 100
         size = 1000
 
-        dataset = PercolationDataset("one_cluster", value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(graph=20, embed=21, value=22))
+        dataset = PercolationDataset("one_cluster", ratio=0.5, seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         nn = NearestNeighbors(n_neighbors=1).fit(X_large)
 
@@ -512,7 +499,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size_delta = size // 10
         bound = 0.03 # Fairly tight bound, variance is small across seeds
 
-        dataset = PercolationDataset("distribution", value_generator_kwargs={'ratio': 0.5}, seeds=Seeds(graph=20, embed=21, value=22))
+        dataset = PercolationDataset("distribution", ratio=0.5, seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
 

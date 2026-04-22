@@ -47,29 +47,19 @@ class Seeds:
 
 
 class PercolationDataset:
-    """Generates a percolation dataset."""
+    """Generates a percolation dataset."""    
 
-    @staticmethod
-    def _default_generate_value(base_value: float, depth: int, rng: np.random.Generator, **kwargs: Any) -> float:
-        ratio = kwargs['ratio']
-        variance = (1 - ratio) * ratio**depth
-        std = np.sqrt(variance)
-        return base_value + rng.normal(0, std)
-    
-
-    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, value_generator: Optional[Callable[..., float]] = None, value_generator_kwargs: Optional[Dict[str, Any]] = None, seeds: Optional[Seeds] = None):
+    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, ratio: float = 0.9, seeds: Optional[Seeds] = None):
         """Initializes the dataset generator.
         Args:
             mode: The mode of dataset generation, either "one_cluster", "distribution", or "custom". Determines create_prob.
             create_prob: Probability of creating a new cluster instead of splitting an existing one (only used in "custom" mode).
-            value_generator: Function to generate values for child nodes based on parent value and depth (only used in "custom" mode).
-            value_generator_kwargs: Additional keyword arguments to pass to the value generator function (only used in "custom" mode). Defaults to {'ratio': 0.9}.
+            ratio: The ratio for value generation (only used in "custom" mode).
             seeds: Seeds for reproducibility of different random processes.
         """
         
         self.mode = mode
-        self.value_generator = value_generator if value_generator is not None else self._default_generate_value
-        self.value_generator_kwargs = value_generator_kwargs if value_generator_kwargs is not None else {'ratio': 0.9}
+        self.ratio = ratio
         self.seeds = seeds if seeds is not None else Seeds()
 
         if self.mode not in ("one_cluster", "distribution", "custom"):
@@ -326,6 +316,11 @@ class PercolationDataset:
             start_idx = end_idx
 
         return np.stack([embeddings[point.point_idx] for point in points])
+    
+    def _generate_value(self, base_value: float, depth: int, rng: np.random.Generator) -> float:
+        variance = (1 - self.ratio) * self.ratio**depth
+        std = np.sqrt(variance)
+        return base_value + rng.normal(0, std)
 
 
     def embed_labels(self, points: List['Node'], latents: Dict[int, 'Node']) -> np.ndarray:
@@ -342,8 +337,7 @@ class PercolationDataset:
         # Compute base value for each cluster
         cluster_values = np.zeros(n_clusters)
         for cluster_idx in range(n_clusters):
-            base_value = self.value_generator(base_value=0.0, depth=0, rng=rngs[cluster_idx],
-                                              **self.value_generator_kwargs)
+            base_value = self._generate_value(base_value=0.0, depth=0, rng=rngs[cluster_idx])
             cluster_values[cluster_idx] = base_value
 
         # Assign values for single points with no latents
@@ -356,14 +350,12 @@ class PercolationDataset:
             if not latent.parents:
                 latent.value = cluster_values[latent.cluster_idx]
             for child in sorted(latent.children, key=lambda c: c.point_idx):
-                child.value = self.value_generator(base_value=latent.value, depth=latent.depth + 1,
-                                                   rng=rngs[latent.cluster_idx],
-                                                  **self.value_generator_kwargs)
+                child.value = self._generate_value(base_value=latent.value, depth=latent.depth + 1,
+                                                   rng=rngs[latent.cluster_idx])
 
         # Compute irreducible error for each point
-        ratio = self.value_generator_kwargs['ratio']
         for point in points:
-            irreducible_variance = ratio**(point.depth + 1)
+            irreducible_variance = self.ratio**(point.depth + 1)
             irreducible_std = np.sqrt(irreducible_variance)
             ss = np.random.SeedSequence(entropy=error_seed.entropy,
                             spawn_key=error_seed.spawn_key + (point.point_idx,))
