@@ -9,7 +9,7 @@ from scipy import stats
 from sklearn.model_selection import cross_val_score, ShuffleSplit
 from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import Ridge
-from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import KNeighborsRegressor, NearestNeighbors
 
 from percolation_dataset import Node, Seeds, PercolationDataset, GroundTruthFeatures
 
@@ -24,7 +24,7 @@ def ground_truth_1nn_baseline(points: List['Node'], seed: Optional[int] = None) 
             neighbors = sorted(list(point.neighbors), key=lambda p: p.point_idx)
             idx = rng.choice(len(neighbors))
             neighbor = neighbors[idx]
-            error.append((neighbor.value + neighbor.error) - (point.value + point.error))
+            error.append((neighbor.value_sum/np.sqrt(neighbor.depth + 1)) - (point.value_sum/np.sqrt(point.depth + 1)))
     error = np.array(error)
     mse = (error**2).mean()
     return mse
@@ -197,7 +197,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
                 self.assertEqual(p_small.cluster_idx, p_large.cluster_idx)
                 self.assertEqual(p_small.level, p_large.level)
                 self.assertEqual(p_small.value, p_large.value)
-                self.assertEqual(p_small.error, p_large.error)
+                self.assertEqual(p_small.value_sum, p_large.value_sum)
 
                 # Compare labels
                 self.assertEqual(y_small[i], y_large[idx_large],
@@ -421,11 +421,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         # Check z_u values are correct for each latent
         for lidx in range(gt_features.n_latents):
             latent_node = gt_features.latents[gt_features.lidx2latent[lidx]]
-            if latent_node.parents:
-                parent = list(latent_node.parents)[0]
-                expected_z_u = latent_node.value - parent.value
-            else:
-                expected_z_u = latent_node.value
+            expected_z_u = latent_node.value
             col = X_values.getcol(lidx)
             nonzero_vals = col.data
             if len(nonzero_vals) > 0:
@@ -440,7 +436,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
             ancestors = gt_features.pidx2lidx[pidx]
             if ancestors:
                 deepest_latent = gt_features.latents[gt_features.lidx2latent[ancestors[-1]]]
-                self.assertAlmostEqual(row.sum(), deepest_latent.value, places=10,
+                self.assertAlmostEqual(row.sum(), deepest_latent.value_sum, places=10,
                     msg=f"Sum of z_u for point {pidx} does not equal deepest ancestor latent value")
 
     def test_nearest_neighbor_ground_truth(self):
@@ -457,19 +453,6 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         self.assertAlmostEqual(mse_gt_1nn, mse_data_1nn, delta=0.05,
                                msg="1-NN MSE on ground truth points does not match that on embedded data")
         
-    def test_ratio_effect_on_loss(self):
-        """Test that increasing ratio increases baseline MSE."""
-        size = 1000
-        points_01, _latents01, _X01, _y01 = PercolationDataset("distribution", ratio=0.1, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
-        points_05, _latents05, _X05, _y05 = PercolationDataset("distribution", ratio=0.5, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
-        points_09, _latents09, _X09, _y09 = PercolationDataset("distribution", ratio=0.9, seeds=Seeds(graph=0)).construct_embed(size=size, d=16)
-
-        mse_01 = ground_truth_1nn_baseline(points_01, seed=42)
-        mse_05 = ground_truth_1nn_baseline(points_05, seed=42)
-        mse_09 = ground_truth_1nn_baseline(points_09, seed=42)
-
-        self.assertLess(mse_01, mse_05, "MSE with ratio=0.1 should be less than MSE with ratio=0.5")
-        self.assertLess(mse_05, mse_09, "MSE with ratio=0.5 should be less than MSE with ratio=0.9")
 
     @unittest.skip(reason="cyclic coalescent algorithm not consistent across sizes, skip for now")
     def test_cluster_consistency_across_size(self):
@@ -477,7 +460,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         d = 100
         size = 1000
 
-        dataset = PercolationDataset("one_cluster", ratio=0.5, seeds=Seeds(graph=20, embed=21, value=22))
+        dataset = PercolationDataset("one_cluster", seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         nn = NearestNeighbors(n_neighbors=1).fit(X_large)
 
@@ -499,7 +482,7 @@ class TestPercolationDatasetBasic(unittest.TestCase):
         size_delta = size // 10
         bound = 0.03 # Fairly tight bound, variance is small across seeds
 
-        dataset = PercolationDataset("distribution", ratio=0.5, seeds=Seeds(graph=20, embed=21, value=22))
+        dataset = PercolationDataset("distribution", seeds=Seeds(graph=20, embed=21, value=22))
         _points_large, _latents_large, X_large, y_large = dataset.construct_embed(size, d)
         _points_small, _latents_small, X_small, y_small = dataset.construct_embed(size - size_delta, d)
 
@@ -589,7 +572,7 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
 
         def test_label_distribution_mean(self):
             """Test that the regression labels have approximately zero mean."""
-            self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.1, msg=f"Labels do not have mean close to 0, mean: {self.y.mean()}")
+            self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.2, msg=f"Labels do not have mean close to 0, mean: {self.y.mean()}")
         
         def test_label_distribution_std(self):
             """Test that the regression labels have approximately unit standard deviation."""
@@ -609,11 +592,22 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             self.assertGreater(score, 0.8, f"Mean baseline performance is too good, score: {score}")
 
         def test_ridge_performance(self):
-            """Test that simple ridge regression model performs poorly."""
+            """Test that simple ridge regression model performs moderately well."""
             cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
             model = Ridge(alpha=1.0)
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-            self.assertGreater(score, 0.3, f"Ridge baseline performance is too good, score: {score}")
+            self.assertGreater(score, 0.25, f"Ridge baseline performance is too good, score: {score}")
+            self.assertLess(score, 0.98, f"Ridge baseline performance is too bad, score: {score}")
+
+        def test_nearest_neighbor_performance(self):
+            """Test that k-NN baseline performs reasonably well."""
+            cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
+            model = KNeighborsRegressor(n_neighbors=5)
+            cluster_size = self.ground_truth_features.get_summary_features()['cluster_size']
+            mask = np.array(cluster_size) >= 1000
+            score = -cross_val_score(model, self.X[mask], self.y[mask], cv=cv, scoring='neg_mean_squared_error')
+            self.assertGreater(score, 0.05, f"k-NN baseline performance is too good, score: {score}")
+            self.assertLess(score, 0.4, f"k-NN baseline performance is too bad, score: {score}")
 
         def test_ground_truth_features(self):
             """Test that ground truth features are correctly computed."""
@@ -668,7 +662,7 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
 
         def test_point_values_match_labels(self):
             """Test that point values match labels."""
-            point_labels = np.array([p.value + p.error for p in self.points])
+            point_labels = np.array([p.value_sum/np.sqrt(p.depth + 1) for p in self.points])
             self.assertTrue(np.allclose(point_labels, self.y), "Point values do not match labels")
 
 

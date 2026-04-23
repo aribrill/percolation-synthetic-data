@@ -13,8 +13,9 @@ class Node:
                  parents: Optional[List['Node']] = None,
                  children: Optional[List['Node']] = None,
                  neighbors: Optional[List['Node']] = None,
-                 value: float = 0.0, level: int = 0,
-                 depth: int = 0, node_type: str = 'point'):
+                 value: float = 0.0, value_sum: float = 0.0,
+                 level: int = 0, depth: int = 0,
+                 node_type: str = 'point'):
         self.point_idx = point_idx
         self.cluster_idx = cluster_idx
         self.node_type = node_type
@@ -25,9 +26,9 @@ class Node:
         self.children: Set['Node'] = set(children) if children is not None else set()
         self.neighbors: Set['Node'] = set(neighbors) if neighbors is not None else set()
         self.value: float = value
+        self.value_sum: float = value_sum
         self.level: int = level
         self.depth: int = depth
-        self.error: float = 0.0
 
     def __repr__(self) -> str:
         return f"Node(point_idx={self.point_idx}, type={self.node_type}, value={self.value:.2f})"
@@ -49,17 +50,15 @@ class Seeds:
 class PercolationDataset:
     """Generates a percolation dataset."""    
 
-    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, ratio: float = 0.9, seeds: Optional[Seeds] = None):
+    def __init__(self, mode: Literal["one_cluster", "distribution", "custom"], create_prob: Optional[float] = None, seeds: Optional[Seeds] = None):
         """Initializes the dataset generator.
         Args:
             mode: The mode of dataset generation, either "one_cluster", "distribution", or "custom". Determines create_prob.
             create_prob: Probability of creating a new cluster instead of splitting an existing one (only used in "custom" mode).
-            ratio: The ratio for value generation (only used in "custom" mode).
             seeds: Seeds for reproducibility of different random processes.
         """
         
         self.mode = mode
-        self.ratio = ratio
         self.seeds = seeds if seeds is not None else Seeds()
 
         if self.mode not in ("one_cluster", "distribution", "custom"):
@@ -317,11 +316,6 @@ class PercolationDataset:
 
         return np.stack([embeddings[point.point_idx] for point in points])
     
-    def _generate_value(self, base_value: float, depth: int, rng: np.random.Generator) -> float:
-        variance = (1 - self.ratio) * self.ratio**depth
-        std = np.sqrt(variance)
-        return base_value + rng.normal(0, std)
-
 
     def embed_labels(self, points: List['Node'], latents: Dict[int, 'Node']) -> np.ndarray:
         """Generates labels for the points."""
@@ -330,39 +324,26 @@ class PercolationDataset:
         n_clusters = len(cluster_counts)
 
         seed_seq = np.random.SeedSequence(self.seeds.value) if self.seeds.value is not None else np.random.SeedSequence()
-        cluster_seed, error_seed = seed_seq.spawn(2)
+        latent_seed, point_seed = seed_seq.spawn(2)
 
-        rngs = [np.random.default_rng(s) for s in cluster_seed.spawn(n_clusters)]
-
-        # Compute base value for each cluster
-        cluster_values = np.zeros(n_clusters)
-        for cluster_idx in range(n_clusters):
-            base_value = self._generate_value(base_value=0.0, depth=0, rng=rngs[cluster_idx])
-            cluster_values[cluster_idx] = base_value
-
-        # Assign values for single points with no latents
-        for point in points:
-            if not point.parents:
-                point.value = cluster_values[point.cluster_idx]
-
-        # Compute values hierarchically using the latents
+        # Compute values for each latent within each cluster
+        rngs = [np.random.default_rng(s) for s in latent_seed.spawn(n_clusters)]
         for latent in latents.values():
-            if not latent.parents:
-                latent.value = cluster_values[latent.cluster_idx]
-            for child in sorted(latent.children, key=lambda c: c.point_idx):
-                child.value = self._generate_value(base_value=latent.value, depth=latent.depth + 1,
-                                                   rng=rngs[latent.cluster_idx])
+            latent.value = rngs[latent.cluster_idx].normal()
+            latent.value_sum = latent.value
+            if latent.parents:
+                latent.value_sum += list(latent.parents)[0].value_sum
 
-        # Compute irreducible error for each point
-        for point in points:
-            irreducible_variance = self.ratio**(point.depth + 1)
-            irreducible_std = np.sqrt(irreducible_variance)
-            ss = np.random.SeedSequence(entropy=error_seed.entropy,
-                            spawn_key=error_seed.spawn_key + (point.point_idx,))
-            rng = np.random.default_rng(ss)
-            point.error = rng.normal(0, irreducible_std)
-
-        return np.array([point.value + point.error for point in points])
+        # Compute values for each point
+        point_rng = np.random.default_rng(seed=point_seed)
+        values = point_rng.normal(size=len(points))
+        for i, point in enumerate(points):
+            point.value = values[i]
+            point.value_sum = point.value
+            if point.parents:
+                point.value_sum += list(point.parents)[0].value_sum
+                                
+        return np.array([point.value_sum/np.sqrt(point.depth + 1) for point in points])
 
 
     def construct_embed(self, size: int, d: int) -> Tuple[List['Node'], Dict[int, 'Node'], np.ndarray, np.ndarray]:
@@ -440,12 +421,7 @@ class GroundTruthFeatures:
         for lidx, pidx in islice(self.lidx2pidx.items(), n_features):
             if use_values:
                 latent_node = self.latents[self.lidx2latent[lidx]]
-                if latent_node.parents:
-                    parent = list(latent_node.parents)[0]
-                    z_u = latent_node.value - parent.value
-                else:
-                    z_u = latent_node.value
-                data.extend([z_u] * len(pidx))
+                data.extend([latent_node.value] * len(pidx))
             else:
                 data.extend(np.ones_like(pidx))
             row_ind.extend(pidx)
