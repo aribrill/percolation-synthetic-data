@@ -553,10 +553,10 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             self.assertFalse(np.isinf(self.y).any(), "Labels contain Inf values")
 
         def test_feature_variability(self):
-            """Test that the features have reasonable variance."""
+            """Test that the features have approximately unit variance."""
             variances = self.X.var(axis=0)
-            min_var = 0.01
-            max_var = 1.0
+            min_var = 0.1
+            max_var = 2.0
             self.assertTrue(np.all(variances > min_var), f"Feature variances are too small: {variances}")
             self.assertTrue(np.all(variances < max_var), f"Feature variances are too large: {variances}")
 

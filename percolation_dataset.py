@@ -240,14 +240,23 @@ class PercolationDataset:
         
         # Set up RNG
         seed_seq = np.random.SeedSequence(self.seeds.embed) if self.seeds.embed is not None else np.random.SeedSequence()
-        cluster_vec_seed, cluster_uniform_seed, cluster_root_seed, latent_dir_seed = seed_seq.spawn(4)
+        cluster_vec_seed, cluster_origin_seed, cluster_root_seed, latent_dir_seed = seed_seq.spawn(4)
 
         # Compute base embedding direction for each cluster
+        n_clusters = len(set(point.cluster_idx for point in points))
         cluster_vec_rng = np.random.default_rng(seed=cluster_vec_seed)
-        cluster_vectors = {}
-        for cluster_idx in np.unique([point.cluster_idx for point in points]):
-            vec = cluster_vec_rng.normal(size=d)
-            cluster_vectors[cluster_idx] = vec / np.linalg.norm(vec)
+        cluster_vectors = cluster_vec_rng.normal(size=(n_clusters, d))
+        cluster_vectors /= np.linalg.norm(cluster_vectors, axis=1, keepdims=True)
+
+        # Compute random origin for each cluster
+        if self.mode == "one_cluster":
+            cluster_origin = np.zeros((n_clusters, d))
+        else:
+            # Uniform distribution over a d-dimensional ball
+            cluster_origin_rng = np.random.default_rng(seed=cluster_origin_seed)
+            z = cluster_origin_rng.normal(size=(n_clusters, d + 2))
+            z /= np.linalg.norm(z, axis=1, keepdims=True)
+            cluster_origin = z[:, :d]
 
         # Assign directions using latents to embed points self-consistently with scale
         point_vectors = {}
@@ -263,7 +272,8 @@ class PercolationDataset:
                 point_vectors[child.point_idx] = vector
 
         size = len(points)
-        scale = size**-0.25
+        step = size**-(1/4) if self.mode == "one_cluster" else size**-(1/6)
+
         start_idx, end_idx = 0, 0
         point_idx2idx = {point.point_idx: i for i, point in enumerate(points)}
         embeddings = {}
@@ -297,25 +307,21 @@ class PercolationDataset:
             # DFS using stack
             stack = [root]
             visited = {root}
-            ss = np.random.SeedSequence(entropy=cluster_uniform_seed.entropy,
-                                        spawn_key=cluster_uniform_seed.spawn_key + (points[start_idx].cluster_idx,))
-            cluster_uniform_rng = np.random.default_rng(ss)
-            embeddings[root] = scale*point_vectors[root]
-            if self.mode == "distribution":
-                embeddings[root] += cluster_uniform_rng.uniform(low=-0.5, high=0.5, size=d)
+            embeddings[root] = cluster_origin[points[start_idx].cluster_idx] + step*point_vectors[root]
 
             while stack:
                 parent = stack.pop()
                 for neighbor in sorted(points[point_idx2idx[parent]].neighbors, key=lambda n: n.point_idx):
                     if neighbor.point_idx not in visited:
                         visited.add(neighbor.point_idx)
-                        embeddings[neighbor.point_idx] = embeddings[parent] + scale*point_vectors[neighbor.point_idx]
+                        embeddings[neighbor.point_idx] = embeddings[parent] + step*point_vectors[neighbor.point_idx]
                         stack.append(neighbor.point_idx)
             
             start_idx = end_idx
 
-        return np.stack([embeddings[point.point_idx] for point in points])
-    
+        X = np.stack([embeddings[point.point_idx] for point in points])
+        X *= np.sqrt(d)
+        return X
 
     def embed_labels(self, points: List['Node'], latents: Dict[int, 'Node']) -> np.ndarray:
         """Generates labels for the points."""
