@@ -665,6 +665,16 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             point_labels = np.array([p.value_sum/np.sqrt(p.depth + 1) for p in self.points])
             self.assertTrue(np.allclose(point_labels, self.y), "Point values do not match labels")
 
+        def test_distribution_is_isotropic(self):
+            """Test that the embedded distribution is not anisotropic along the principal axes."""
+            X = self.X - self.X.mean(axis=0)
+            rot = stats.special_ortho_group.rvs(self.d, random_state=0)
+            Y = X @ rot.T
+            k_axis = stats.kurtosis(X, axis=0, fisher=True, bias=False)
+            k_rot  = stats.kurtosis(Y, axis=0, fisher=True, bias=False)
+            pvalue = stats.wilcoxon(k_axis, k_rot).pvalue # type: ignore[attr-defined]
+            self.assertGreater(pvalue, 0.05, f"Distribution appears anisotropic along principal axes, k_axis - k_rot {k_axis - k_rot} (Wilcoxon p-value: {pvalue:.4f})")
+
 
 class TestOneCluster(BaseTestWrapper.DatasetPropertiesTests, unittest.TestCase):
     """Validate the properties of the generated dataset."""
