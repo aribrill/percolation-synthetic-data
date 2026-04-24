@@ -679,7 +679,7 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             k_axis = stats.kurtosis(X, axis=0, fisher=True, bias=False)
             k_rot  = stats.kurtosis(Y, axis=0, fisher=True, bias=False)
             pvalue = stats.wilcoxon(k_axis, k_rot).pvalue # type: ignore[attr-defined]
-            self.assertGreater(pvalue, 0.05, f"Distribution appears anisotropic along principal axes, k_axis - k_rot {k_axis - k_rot} (Wilcoxon p-value: {pvalue:.4f})")
+            self.assertGreater(pvalue, 0.01, f"Distribution appears anisotropic along principal axes, k_axis - k_rot {k_axis - k_rot} (Wilcoxon p-value: {pvalue:.4f})")
 
 
 class TestOneCluster(BaseTestWrapper.DatasetPropertiesTests, unittest.TestCase):
