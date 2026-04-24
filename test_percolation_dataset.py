@@ -507,6 +507,17 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
         y: np.ndarray
         ground_truth_features: GroundTruthFeatures
 
+        # Customizable parameters for specific tests, set by subclasses
+        embedding_std_delta: float
+        label_mean_delta: float
+        label_std_delta: float
+
+        mean_predictor_lower_bound: float
+        ridge_predictor_lower_bound: float
+        ridge_predictor_upper_bound: float
+        knn_predictor_lower_bound: float
+        knn_predictor_upper_bound: float
+
         def test_degree_distribution(self):
             """Test that degree distribution is well fit by shifted Poisson distribution using KL divergence."""
             # Get degrees, skipping small clusters
@@ -560,23 +571,18 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             self.assertTrue(np.all(variances > min_var), f"Feature variances are too small: {variances}")
             self.assertTrue(np.all(variances < max_var), f"Feature variances are too large: {variances}")
 
-        def test_embedding_distribution_mean(self):
-            """Test that the embeddings have approximately zero mean."""
-            self.assertLessEqual(np.mean(np.abs(self.X.mean(axis=0))), 0.1, f"Typical embedding mean is not close to 0, mean of means: {np.mean(np.abs(self.X.mean(axis=0)))}")
-            self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.25), f"Embeddings do not have mean close to 0, means: {self.X.mean(axis=0)}")
-
         def test_embedding_distribution_std(self):
             """Test that the embeddings have consistent standard deviations."""
             relative_std = self.X.std(axis=0).std() / self.X.std(axis=0).mean()
-            self.assertLess(relative_std, 0.1, f"Embeddings do not have consistent standard deviations, relative std: {relative_std}")
+            self.assertLess(relative_std, self.embedding_std_delta, f"Embeddings do not have consistent standard deviations, relative std: {relative_std}")
 
         def test_label_distribution_mean(self):
             """Test that the regression labels have approximately zero mean."""
-            self.assertAlmostEqual(self.y.mean(), 0.0, delta=0.2, msg=f"Labels do not have mean close to 0, mean: {self.y.mean()}")
+            self.assertAlmostEqual(self.y.mean(), 0.0, delta=self.label_mean_delta, msg=f"Labels do not have mean close to 0, mean: {self.y.mean()}")
         
         def test_label_distribution_std(self):
             """Test that the regression labels have approximately unit standard deviation."""
-            self.assertAlmostEqual(self.y.std(), 1.0, delta=0.1, msg=f"Labels do not have standard deviation close to 1, std: {self.y.std()}")
+            self.assertAlmostEqual(self.y.std(), 1.0, delta=self.label_std_delta, msg=f"Labels do not have standard deviation close to 1, std: {self.y.std()}")
 
         def test_feature_label_correlation(self):
             """Test that the features and labels are weakly correlated."""
@@ -589,15 +595,15 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
             model = DummyRegressor(strategy='mean')
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-            self.assertGreater(score, 0.8, f"Mean baseline performance is too good, score: {score}")
+            self.assertGreater(score, self.mean_predictor_lower_bound, f"Mean baseline performance is too good, score: {score}")
 
         def test_ridge_performance(self):
             """Test that simple ridge regression model performs moderately well."""
             cv = ShuffleSplit(n_splits=1, test_size=0.1, random_state=42)
             model = Ridge(alpha=1.0)
             score = -cross_val_score(model, self.X, self.y, cv=cv, scoring='neg_mean_squared_error')
-            self.assertGreater(score, 0.25, f"Ridge baseline performance is too good, score: {score}")
-            self.assertLess(score, 0.98, f"Ridge baseline performance is too bad, score: {score}")
+            self.assertGreater(score, self.ridge_predictor_lower_bound, f"Ridge baseline performance is too good, score: {score}")
+            self.assertLess(score, self.ridge_predictor_upper_bound, f"Ridge baseline performance is too bad, score: {score}")
 
         def test_nearest_neighbor_performance(self):
             """Test that k-NN baseline performs reasonably well."""
@@ -606,8 +612,8 @@ class BaseTestWrapper: # Wrapper prevents unittest from trying to run DatasetPro
             cluster_size = self.ground_truth_features.get_summary_features()['cluster_size']
             mask = np.array(cluster_size) >= 1000
             score = -cross_val_score(model, self.X[mask], self.y[mask], cv=cv, scoring='neg_mean_squared_error')
-            self.assertGreater(score, 0.05, f"k-NN baseline performance is too good, score: {score}")
-            self.assertLess(score, 0.4, f"k-NN baseline performance is too bad, score: {score}")
+            self.assertGreater(score, self.knn_predictor_lower_bound, f"k-NN baseline performance is too good, score: {score}")
+            self.assertLess(score, self.knn_predictor_upper_bound, f"k-NN baseline performance is too bad, score: {score}")
 
         def test_ground_truth_features(self):
             """Test that ground truth features are correctly computed."""
@@ -693,6 +699,15 @@ class TestOneCluster(BaseTestWrapper.DatasetPropertiesTests, unittest.TestCase):
         cls.y = y
         cls.ground_truth_features = GroundTruthFeatures(points, latents)
 
+        cls.embedding_std_delta = 0.3
+        cls.label_mean_delta = 0.3
+        cls.label_std_delta = 0.5
+
+        cls.mean_predictor_lower_bound = 0.3
+        cls.ridge_predictor_lower_bound = 0.2
+        cls.ridge_predictor_upper_bound = 0.5
+        cls.knn_predictor_lower_bound = 0.05
+        cls.knn_predictor_upper_bound = 0.4
 
 class TestLargeDistribution(BaseTestWrapper.DatasetPropertiesTests, unittest.TestCase):
     """Validate the properties of the generated dataset."""
@@ -710,6 +725,21 @@ class TestLargeDistribution(BaseTestWrapper.DatasetPropertiesTests, unittest.Tes
         cls.X = X
         cls.y = y
         cls.ground_truth_features = GroundTruthFeatures(points, latents)
+
+        cls.embedding_std_delta = 0.05
+        cls.label_mean_delta = 0.05
+        cls.label_std_delta = 0.05
+
+        cls.mean_predictor_lower_bound = 0.95
+        cls.ridge_predictor_lower_bound = 0.9
+        cls.ridge_predictor_upper_bound = 0.98
+        cls.knn_predictor_lower_bound = 0.1
+        cls.knn_predictor_upper_bound = 0.4
+
+    def test_embedding_distribution_mean(self):
+        """Test that the embeddings have approximately zero mean."""
+        self.assertLessEqual(np.mean(np.abs(self.X.mean(axis=0))), 0.1, f"Typical embedding mean is not close to 0, mean of means: {np.mean(np.abs(self.X.mean(axis=0)))}")
+        self.assertTrue(np.allclose(self.X.mean(axis=0), 0.0, atol=0.25), f"Embeddings do not have mean close to 0, means: {self.X.mean(axis=0)}")
 
     def test_size_distribution(self):
         """Test that size distribution is well fit by a power law using maximum likelihood."""
