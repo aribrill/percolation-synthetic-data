@@ -41,7 +41,7 @@ features = sparse.load_npz("percolation_dataset_size<SIZE>_dim<DIM>_seed<SEED>_g
 
 This project is led by Ari Brill. Contact information is on my [website](https://www.aribrill.com/).
 
-This research program is part of the [renormalization research group](https://www.lesswrong.com/posts/74wSgnCKPHAuqExe7/renormalization-roadmap) at [Principles of Intelligence](https://princint.ai/).
+This research program is part of the [PIRAMID Project](https://princint.ai/piramid-project/) at [Principles of Intelligence](https://princint.ai/).
 
 For more information on the percolation cluster model of data structure, see the papers:
 
